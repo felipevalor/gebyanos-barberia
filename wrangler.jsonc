@@ -1,0 +1,85 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gebyanos-barberia",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "observability": {
+    "enabled": true
+  },
+
+  // Frontend: static assets servidos por el mismo Worker.
+  // Se activa en la fase de frontend; el directorio todavia no existe.
+  // "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "barberia",
+      "database_id": "23768229-a7fa-47da-a5df-19daf171268d",
+      "migrations_dir": "src/db/migrations"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "CACHE",
+      "id": "dabdeb7f16764c45988ef341e77fd37c"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "BARBERO_AGENDA", "class_name": "BarberoAgenda" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      // SQLite-backed: disponible en el plan Free.
+      "new_sqlite_classes": ["BarberoAgenda", "RateLimiter"]
+    }
+  ],
+
+  // Queues esta incluido en el plan Free: 10.000 operaciones/dia,
+  // retencion de 24 h (no configurable).
+  // https://developers.cloudflare.com/queues/platform/pricing/
+  "queues": {
+    "producers": [{ "binding": "NOTIFICACIONES", "queue": "barberia-notificaciones" }],
+    "consumers": [
+      {
+        "queue": "barberia-notificaciones",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 3,
+        "dead_letter_queue": "barberia-notificaciones-dlq"
+      }
+    ]
+  },
+
+  // UN SOLO cron trigger, con despacho interno por hora (ver src/index.ts).
+  //
+  // Los Cron Triggers son 5 POR CUENTA en el plan Free, no por Worker.
+  // Con 3 crons por barberia entraba una sola instancia; con 1 entran 5.
+  // Ver Fase 6 (una instancia por barberia) — esto le compra margen sin
+  // necesitar el Worker orquestador de la tarea 6.4.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+
+  "vars": {
+    "ENVIRONMENT": "development"
+  }
+
+  // Secrets (via `wrangler secret put`), NUNCA en este archivo:
+  //   SESSION_SECRET          firma de cookies de sesion admin
+  //   MAGIC_LINK_SECRET       firma de magic links
+  //   MAGIC_LINK_TTL_MIN      TTL del magic link (default 15)
+  //   ENCRYPTION_KEY          cifrado de credenciales de integraciones
+  //   GOOGLE_SA_EMAIL         service account de Google Calendar
+  //   GOOGLE_SA_PRIVATE_KEY   clave privada del service account
+  //   CALLMEBOT_APIKEY        WhatsApp via CallMeBot
+}

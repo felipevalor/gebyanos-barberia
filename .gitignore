@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+dist/
+.dev.vars
+.dev.vars.*
+# La plantilla SI va al repo: documenta que secrets hacen falta, sin valores.
+!.dev.vars.example
+.DS_Store
+*.log

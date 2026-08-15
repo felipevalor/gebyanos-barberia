@@ -1,0 +1,8 @@
+# Copiar a .dev.vars para desarrollo local. NO commitear .dev.vars.
+SESSION_SECRET=dev-session-secret-cambiar
+MAGIC_LINK_SECRET=dev-magic-secret-cambiar
+MAGIC_LINK_TTL_MIN=15
+ENCRYPTION_KEY=dev-encryption-key-cambiar
+GOOGLE_SA_EMAIL=
+GOOGLE_SA_PRIVATE_KEY=
+CALLMEBOT_APIKEY=
