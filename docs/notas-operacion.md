@@ -111,6 +111,47 @@ del request, y la medición local es optimista respecto del edge.
 
 ---
 
+## El binding nativo de Rate Limiting no sirve para este sistema
+
+Se evaluó `env.RATE_LIMITER.limit({ key })` antes de escribir el Durable
+Object. Es más simple y no requiere código propio. **No alcanza**, por tres
+razones, en orden de peso:
+
+**1. La ventana no es expresable.** De la doc:
+
+> `simple.period` — The duration of the rate limit window, in seconds. **Must
+> be either 10 or 60.**
+
+La ventana de este sistema es de **15 minutos** (900 s). No hay configuración
+que la produzca, y aproximarla con 60 s cambia la regla de negocio.
+
+**2. El contador es por ubicación de Cloudflare.**
+
+> For each unique key you pass to your rate limiting binding, there is a unique
+> limit **per Cloudflare location**.
+
+Contra fuerza bruta sobre el login eso es fatal: un atacante que rote de PoP
+multiplica el cupo por la cantidad de ubicaciones.
+
+**3. Es deliberadamente inexacto.**
+
+> permissive, eventually consistent, and **intentionally designed to not be
+> used as an accurate accounting system**.
+
+### Lo que sí conviene saber del binding
+
+Si alguna vez encaja para otro caso: comparte contadores entre Workers de la
+misma cuenta cuando comparten `namespace_id`, y **no es visible en el
+dashboard**.
+
+La doc además desaconseja limitar por IP, porque muchos usuarios pueden
+compartirla. Acá se hace igual: el cliente es anónimo y no hay identidad que
+usar. Es una limitación conocida — una barbería con wifi compartido puede
+autobloquearse — y la mitigación es que la ventana es corta y el límite alto
+para un uso normal.
+
+---
+
 ## Un Durable Object NO serializa las llamadas a D1
 
 **"Un DO procesa un request a la vez" vale para `ctx.storage`, no para llamadas

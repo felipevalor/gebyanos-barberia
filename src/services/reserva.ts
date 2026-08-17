@@ -91,7 +91,7 @@ export function validarForma(
   // y terminaban cayendo en el paso 8 con "fuera del horario de atención",
   // que no es lo que pasa.
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) {
-    return { ok: false, error: 'Formato de hora inválido. Use HH:mm.' };
+    return { ok: false, error: 'Formato de hora inválido. Usá HH:mm.' };
   }
   if (!clienteNombre) return { ok: false, error: 'clienteNombre es obligatorio.' };
   if (clienteNombre.length > MAX_NOMBRE) {

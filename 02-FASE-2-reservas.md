@@ -183,7 +183,7 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 | `barberoId` | requerido | `barberoId es obligatorio.` |
 | `servicioId` | requerido | `servicioId es obligatorio.` |
 | `fecha` | requerido | `fecha es obligatoria.` |
-| `hora` | requerido, regex `^([01]\d|2[0-3]):[0-5]\d$` | `Formato de hora inválido. Use HH:mm.` |
+| `hora` | requerido, regex `^([01]\d|2[0-3]):[0-5]\d$` | `Formato de hora inválido. Usá HH:mm.` |
 | `clienteNombre` | requerido, máx 100 | `clienteNombre es obligatorio.` / `El nombre no puede superar los 100 caracteres.` |
 | `clienteTelefono` | requerido, máx 20 | `clienteTelefono es obligatorio.` / `El teléfono no puede superar los 20 caracteres.` |
 | `mensaje` | máx 500 | `El mensaje no puede superar los 500 caracteres.` |
@@ -225,7 +225,7 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 
 ### Estados de resultado
 
-`exito` | `overlap` | `datosInvalidos` | `noDisponible`. Los tres de error → **400**. Excepción no controlada → **500** con `Ocurrió un error al procesar la reserva. Por favor, reintenta.`
+`exito` | `overlap` | `datosInvalidos` | `noDisponible`. Los tres de error → **400**. Excepción no controlada → **500** con `Ocurrió un error al procesar la reserva. Por favor, reintentá.`
 
 **Respuesta OK:** `{ ok: true, data: { cancelToken, mensaje: "Turno agendado exitosamente" } }`.
 

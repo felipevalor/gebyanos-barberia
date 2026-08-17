@@ -50,14 +50,15 @@ No hay respuestas sin sobre. No hay campos extra en el nivel superior.
 | `200` | OK |
 | `400` | Validación, regla de negocio, o el turno se ocupó |
 | `404` | Ruta inexistente, o `negocio` sin configurar |
+| `429` | Rate limit excedido |
 | `500` | Error no controlado |
 
 **Importante para el frontend:** un slot ocupado devuelve **400**, no 409. Los
 tres estados de error de la reserva (`datosInvalidos`, `noDisponible`,
 `overlap`) colapsan en 400 y se distinguen **solo por el texto de `error`**.
 
-Los códigos `401`, `403`, `409` y `429` están definidos en las convenciones pero
-**ningún endpoint público los emite hoy**.
+Los códigos `401` y `403` los emite el panel (`/api/admin/*`). El `409` está
+definido en las convenciones pero ningún endpoint lo emite hoy.
 
 ### Caché
 
@@ -78,9 +79,23 @@ Ninguno de estos endpoints la requiere. Todos son anónimos.
 
 ### Rate limit
 
-**No implementado todavía** (tarea 2.6). Cuando exista: 10 requests por IP cada
-15 minutos sobre `POST /api/reservas`, respondiendo `429` con
-`Demasiados intentos. Intenta más tarde.`
+**10 por IP cada 15 minutos**, con contadores independientes por endpoint:
+
+| Endpoint | Qué consume cupo |
+|---|---|
+| `POST /api/reservas` | **cada request**, incluidos los rechazados |
+| `POST /api/admin/auth` | **solo los intentos fallidos** — un login correcto no gasta nada |
+
+Excedido → **429** con `Demasiados intentos. Intentá más tarde.` y un header
+`Retry-After` en segundos.
+
+Agotar el cupo de un endpoint **no** afecta al otro.
+
+Los endpoints de lectura (catálogos y disponibilidad) **no tienen rate
+limit**: son cacheables y no escriben nada.
+
+El contador es por ventana fija, no deslizante: arranca en el primer request y
+se reinicia entero a los 15 minutos.
 
 ---
 
@@ -472,7 +487,7 @@ Todos son **400** con el sobre `{ ok: false, error }`. En orden de evaluación �
 | F2 | `barberoId es obligatorio.` | vacío o ausente |
 | F3 | `servicioId es obligatorio.` | vacío o ausente |
 | F4 | `fecha es obligatoria.` | vacía o ausente |
-| F5 | `Formato de hora inválido. Use HH:mm.` | ausente, sin padding (`9:00`), o imposible (`24:00`, `10:60`) |
+| F5 | `Formato de hora inválido. Usá HH:mm.` | ausente, sin padding (`9:00`), o imposible (`24:00`, `10:60`) |
 | F6 | `clienteNombre es obligatorio.` | vacío o ausente |
 | F7 | `El nombre no puede superar los 100 caracteres.` | |
 | F8 | `clienteTelefono es obligatorio.` | vacío o ausente |
@@ -505,7 +520,7 @@ evitar que un `false` cierre el día. Un domingo sin horario sigue devolviendo
 ```json
 {
   "ok": false,
-  "error": "Ocurrió un error al procesar la reserva. Por favor, reintenta."
+  "error": "Ocurrió un error al procesar la reserva. Por favor, reintentá."
 }
 ```
 
@@ -542,6 +557,7 @@ carácter por carácter.
 | `Año inválido.` | 400 | `/disponibilidad/mes` |
 | `barberoId es obligatorio.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
 | `Barbero inválido.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
+| `Demasiados intentos. Intentá más tarde.` | 429 | `POST /reservas`, `POST /api/admin/auth` |
 | `clienteNombre es obligatorio.` | 400 | `POST /reservas` |
 | `clienteTelefono es obligatorio.` | 400 | `POST /reservas` |
 | `Debés reservar con al menos {N} minutos de anticipación.` | 400 | `POST /reservas` |
@@ -552,7 +568,7 @@ carácter por carácter.
 | `Error interno.` | 500 | cualquiera menos `POST /reservas` |
 | `fecha es obligatoria.` | 400 | `/disponibilidad`, `POST /reservas` |
 | `Formato de fecha inválido.` | 400 | `/disponibilidad`, `POST /reservas` |
-| `Formato de hora inválido. Use HH:mm.` | 400 | `POST /reservas` |
+| `Formato de hora inválido. Usá HH:mm.` | 400 | `POST /reservas` |
 | `Formato de solicitud inválido.` | 400 | `POST /reservas` |
 | `La barbería no atiende esa fecha (feriado o cierre).` | 400 | `POST /reservas` |
 | `La barbería no atiende ese día.` | 400 | `POST /reservas` |
@@ -561,13 +577,13 @@ carácter por carácter.
 | `No encontrado.` | 404 | ruta inexistente, `/negocio` sin datos |
 | `No se puede agendar un turno en el pasado.` | 400 | `POST /reservas` |
 | `No se puede agendar un turno en un horario que ya pasó.` | 400 | `POST /reservas` |
-| `Ocurrió un error al procesar la reserva. Por favor, reintenta.` | 500 | `POST /reservas` |
+| `Ocurrió un error al procesar la reserva. Por favor, reintentá.` | 500 | `POST /reservas` |
 | `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | 400 | `POST /reservas` |
 | `servicioId es obligatorio.` | 400 | `POST /reservas` |
 | `Solo se puede reservar con hasta {N} días de anticipación.` | 400 | `POST /reservas` |
 
 Dos mensajes existen en el código pero **hoy son inalcanzables**:
-`Formato de hora inválido.` (sin el "Use HH:mm.") y `Turno no disponible.`
+`Formato de hora inválido.` (sin el "Usá HH:mm.") y `Turno no disponible.`
 
 ---
 
@@ -599,7 +615,6 @@ No inventes contratos para esto — se documenta cuando esté construido.
 
 | Qué | Ruta | Tarea |
 |---|---|---|
-| Rate limit en la reserva | — | 2.6 |
 | Login del panel | `POST /api/admin/auth` | 2.5 |
 | Agenda y reservas del panel | `/api/admin/*` | 2.7 |
 | Configuración (horarios, feriados, catálogos) | `/api/admin/*` | Fase 3 |

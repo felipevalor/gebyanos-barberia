@@ -13,12 +13,26 @@ const SERVICIO = '01930000-0000-7000-8000-00000000aa02';
  */
 const FUTURO = addDays(todayArgentina(), 7);
 
-async function post(cuerpo: unknown, ruta = '/api/reservas'): Promise<Response> {
+/**
+ * Cada request sale con una IP DISTINTA salvo que se pida lo contrario.
+ *
+ * Desde la tarea 2.6 hay rate limit de 10 por IP cada 15 min. Sin esto, los
+ * tests comparten el cupo de "sin-ip" y empiezan a recibir 429 por razones que
+ * no tienen nada que ver con lo que prueban. El limite en si se prueba en
+ * test/routes/rate-limit.test.ts.
+ *
+ * Para el test de concurrencia ademas es MAS realista: veinte personas
+ * distintas peleando por el mismo slot son veinte IPs, no una.
+ */
+async function post(cuerpo: unknown, ruta = '/api/reservas', ip?: string): Promise<Response> {
   const ctx = createExecutionContext();
   const res = await worker.fetch(
     new Request(`http://localhost${ruta}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'cf-connecting-ip': ip ?? `198.51.100.${Math.floor(Math.random() * 250) + 1}-${uuidv7()}`,
+      },
       body: typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo),
     }),
     env,
@@ -124,7 +138,7 @@ describe('el 500 tiene su propio mensaje de contrato', () => {
       const res = await post(valido({ hora: '12:00' }));
       expect(res.status).toBe(500);
       expect((await cuerpoDe(res)).error).toBe(
-        'Ocurrió un error al procesar la reserva. Por favor, reintenta.',
+        'Ocurrió un error al procesar la reserva. Por favor, reintentá.',
       );
     } finally {
       await env.DB.prepare('ALTER TABLE reservas_backup RENAME TO reservas').run();

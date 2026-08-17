@@ -73,9 +73,9 @@ describe('validacion de forma — mensajes textuales', () => {
     ['sin barberoId', { barberoId: '' }, 'barberoId es obligatorio.'],
     ['sin servicioId', { servicioId: '' }, 'servicioId es obligatorio.'],
     ['sin fecha', { fecha: '' }, 'fecha es obligatoria.'],
-    ['sin hora', { hora: '' }, 'Formato de hora inválido. Use HH:mm.'],
-    ['hora sin padding', { hora: '9:00' }, 'Formato de hora inválido. Use HH:mm.'],
-    ['hora con formato raro', { hora: '10.00' }, 'Formato de hora inválido. Use HH:mm.'],
+    ['sin hora', { hora: '' }, 'Formato de hora inválido. Usá HH:mm.'],
+    ['hora sin padding', { hora: '9:00' }, 'Formato de hora inválido. Usá HH:mm.'],
+    ['hora con formato raro', { hora: '10.00' }, 'Formato de hora inválido. Usá HH:mm.'],
     ['sin nombre', { clienteNombre: '' }, 'clienteNombre es obligatorio.'],
     ['nombre de 101', { clienteNombre: 'a'.repeat(101) }, 'El nombre no puede superar los 100 caracteres.'],
     ['sin telefono', { clienteTelefono: '' }, 'clienteTelefono es obligatorio.'],
@@ -246,7 +246,7 @@ describe('las once validaciones de negocio', () => {
     // El paso 10 queda como defensa en profundidad INALCANZABLE, y esta bien
     // que lo sea. Ver docs/pendientes.md.
     for (const hora of ['99:99', '24:00', '10:60', '23:99']) {
-      expect(errorDe(await reservar({ hora }))).toBe('Formato de hora inválido. Use HH:mm.');
+      expect(errorDe(await reservar({ hora }))).toBe('Formato de hora inválido. Usá HH:mm.');
     }
   });
 

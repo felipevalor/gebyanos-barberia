@@ -190,12 +190,14 @@ Códigos:
 ## Reglas de oro
 
 1. **El backend valida siempre, aunque el frontend ya haya filtrado.** Un slot puede ocuparse entre que la UI lo muestra y el cliente hace click.
-2. **Los mensajes de error al usuario son contrato.** Están transcritos textuales de la spec. No los reescribas ni los "mejores" — el frontend y los tests dependen de ellos.
-3. **Google Calendar y WhatsApp son best-effort.** Si fallan, la reserva ya está confirmada. Log y seguir. Nunca tires una reserva por una integración caída.
-4. **Soft delete en reservas.** Nunca `DELETE` físico. `estado = 'cancelada'` + `cancelada_at`. Todas las queries de disponibilidad filtran `estado = 'activa'`.
-5. **Turnos contiguos NO solapan.** La fórmula de intersección usa comparadores estrictos (`<`, `>`). Si usás `<=`/`>=` rompés la agenda entera.
-6. **Enmascará teléfonos en los logs.** Solo los últimos 4 dígitos.
-7. **Nada de secretos en el código.** Todo por `wrangler secret`.
+2. **Los mensajes de error al usuario son contrato.** No los reescribas ni los "mejores" — el frontend y los tests dependen de ellos. Si uno te parece mal, marcalo y lo decidimos; no lo cambies solo.
+3. **Todos los mensajes van en voseo rioplatense.** `Usá`, `Elegí`, `Revisá`, `Debés`, `Intentá`, `Reagendalos`. Nunca tuteo (`Usa`, `Intenta`) ni usted (`Use`, `Intente`). Es un producto para una barbería argentina. Si escribís un mensaje nuevo, seguí esa voz — y si ves uno que no la sigue, marcalo.
+4. **Google Calendar y WhatsApp son best-effort.** Si fallan, la reserva ya está confirmada. Log y seguir. Nunca tires una reserva por una integración caída.
+5. **Soft delete en reservas.** Nunca `DELETE` físico. `estado = 'cancelada'` + `cancelada_at`. Todas las queries de disponibilidad filtran `estado = 'activa'`.
+6. **Turnos contiguos NO solapan.** La fórmula de intersección usa comparadores estrictos (`<`, `>`). Si usás `<=`/`>=` rompés la agenda entera.
+7. **Filtrá siempre por `activo = 1`** al leer barberos y servicios. Es el olvido que ya apareció dos veces: un barbero desactivado devolvía horarios, un servicio discontinuado imponía su duración.
+8. **Enmascará teléfonos en los logs.** Solo los últimos 4 dígitos.
+9. **Nada de secretos en el código.** Todo por `wrangler secret`.
 
 ---
 

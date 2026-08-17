@@ -15,6 +15,7 @@ import {
 } from '../services/disponibilidad';
 import { esFechaValida } from '../domain/dates';
 import { crearReserva, type EntradaReserva } from '../services/reserva';
+import { limitarPorIp } from '../middleware/rate-limit';
 
 /**
  * Rutas publicas (cliente anonimo).
@@ -88,10 +89,10 @@ publicRoutes.get('/disponibilidad', noCachear, async (c) => {
 // ----------------------------------------------------------------- reserva
 
 /**
- * Rate limit (10 por IP en 15 min → 429) llega en la tarea 2.6.
- * Ver docs/pendientes.md.
+ * Rate limit: 10 por IP cada 15 min. Consume cupo en CADA request, no solo en
+ * los rechazados — acá el request en si es el costo que se quiere acotar.
  */
-publicRoutes.post('/reservas', noCachear, async (c) => {
+publicRoutes.post('/reservas', noCachear, limitarPorIp('reservas'), async (c) => {
   const cuerpo = await c.req.json().catch(() => null);
   if (!cuerpo || typeof cuerpo !== 'object') {
     return c.json(fail('Formato de solicitud inválido.'), 400);

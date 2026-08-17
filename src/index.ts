@@ -25,7 +25,7 @@ app.onError((err, c) => {
   // El mensaje de 500 de la reserva es contrato: transcripcion textual.
   if (c.req.method === 'POST' && c.req.path === '/api/reservas') {
     return c.json(
-      fail('Ocurrió un error al procesar la reserva. Por favor, reintenta.'),
+      fail('Ocurrió un error al procesar la reserva. Por favor, reintentá.'),
       500,
     );
   }

@@ -44,11 +44,14 @@ Para que el paso 10 sirva, tendría que correr **antes** del 8.
 
 ---
 
-## Tarea 2.6 — falta el rate limit en `POST /api/reservas`
+## ✅ Tarea 2.6 — rate limit implementado — CERRADO 2026-08-17
 
-El endpoint está sin rate limit. La spec de la 2.4 menciona
-`429 Demasiados intentos. Intenta más tarde.` pero el `RateLimiter` es la
-tarea 2.6. El seam está marcado con un comentario en `src/routes/public.ts`.
+`POST /api/reservas` (consume en cada request) y `POST /api/admin/auth`
+(consume solo en los fallos), 10 por IP cada 15 min, con contadores
+independientes por endpoint.
+
+Se descartó el binding nativo: su ventana solo admite 10 o 60 segundos.
+Razones completas en [`notas-operacion.md`](./notas-operacion.md).
 
 ---
 

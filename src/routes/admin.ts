@@ -3,6 +3,7 @@ import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import { ok, fail } from '../api';
 import { sinCache } from '../middleware/cache';
 import { requiereAuth, type VariablesAuth } from '../middleware/auth';
+import { limitarFallosPorIp, type VariablesRateLimit } from '../middleware/rate-limit';
 import {
   login,
   logout,
@@ -19,7 +20,10 @@ import {
  * Nada de acá se cachea nunca: son datos por usuario y respuestas
  * autenticadas.
  */
-export const adminRoutes = new Hono<{ Bindings: Env; Variables: VariablesAuth }>();
+export const adminRoutes = new Hono<{
+  Bindings: Env;
+  Variables: VariablesAuth & VariablesRateLimit;
+}>();
 
 const noCachear = sinCache();
 
@@ -41,11 +45,11 @@ const opcionesCookie = {
 /**
  * `POST /api/admin/auth`
  *
- * Rate limit: 10 fallos por IP en 15 min, y SOLO se consume en los fallos —
- * un login correcto no gasta cupo. Se cablea en la tarea 2.6; el punto de
- * enganche es el `return` de credenciales invalidas de mas abajo.
+ * Rate limit: 10 fallos por IP cada 15 min. SOLO se consume en los fallos —
+ * un login correcto no gasta cupo, asi que alguien que entra diez veces al dia
+ * no se autobloquea.
  */
-adminRoutes.post('/auth', async (c) => {
+adminRoutes.post('/auth', limitarFallosPorIp('login'), async (c) => {
   const cuerpo = await c.req.json().catch(() => null);
   if (!cuerpo || typeof cuerpo !== 'object') {
     return c.json(fail('Formato de solicitud inválido.'), 400);
@@ -59,8 +63,8 @@ adminRoutes.post('/auth', async (c) => {
   );
 
   if (!resultado.ok) {
-    // 🔒 SEAM 2.6: acá se consume el cupo del rate limit. Solo acá — el camino
-    // de exito no pasa por este return.
+    // El unico punto donde se gasta cupo. El camino de exito no pasa por acá.
+    await c.get('registrarFallo')();
     return c.json(fail(ERROR_CREDENCIALES), 401);
   }
 

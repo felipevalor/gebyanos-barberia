@@ -537,7 +537,7 @@ El algoritmo del endpoint público de horarios. Cuatro cortes tempranos y dos fi
 | `barberoId` | requerido | `barberoId es obligatorio.` |
 | `servicioId` | requerido | `servicioId es obligatorio.` |
 | `fecha` | requerido | `fecha es obligatoria.` (en el sistema viejo el campo se llama `fechaIso`) |
-| `hora` | requerido, regex `^\d{2}:\d{2}$` | `Formato de hora inválido. Use HH:mm.` |
+| `hora` | requerido, regex `^([01]\d|2[0-3]):[0-5]\d$` | `Formato de hora inválido. Usá HH:mm.` |
 | `clienteNombre` | requerido, máx 100 | `clienteNombre es obligatorio.` / `El nombre no puede superar los 100 caracteres.` |
 | `clienteTelefono` | requerido, máx 20 | `clienteTelefono es obligatorio.` / `El teléfono no puede superar los 20 caracteres.` |
 | `mensaje` | máx 500 | `El mensaje no puede superar los 500 caracteres.` |
@@ -601,7 +601,7 @@ El DO se direcciona con `idFromName(barberoId)`. Todas las escrituras de reserva
 
 **Mantené el índice único parcial de todas formas.** Defensa en dos capas: si un bug de routing deja pasar una escritura sin el DO, el constraint la ataja. Mapeá el error de constraint de D1 al mismo mensaje de overlap.
 
-**Estados de resultado:** `exito` | `overlap` | `datosInvalidos` | `noDisponible`. Los tres de error → `400`. Excepción no controlada → `500` con `Ocurrió un error al procesar la reserva. Por favor, reintenta.`
+**Estados de resultado:** `exito` | `overlap` | `datosInvalidos` | `noDisponible`. Los tres de error → `400`. Excepción no controlada → `500` con `Ocurrió un error al procesar la reserva. Por favor, reintentá.`
 
 **Dentro de la operación serializada:** upsert del `cliente` por teléfono normalizado (crear o actualizar nombre), insertar la `reserva` con `source = 'web'`, `estado = 'activa'` y un `cancel_token` nuevo.
 
