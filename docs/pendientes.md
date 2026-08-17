@@ -65,8 +65,9 @@ para ese caso. Si aparece un texto de producción, reemplazarlos.
 | `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | paso 5 de la reserva |
 | `Solo podés operar sobre tu propia agenda.` | 403 del scoping del panel |
 | `Servicio inválido.` | reprogramar con un `servicioId` que no existe |
-| `Formato de fecha inválido en desde.` / `en hasta.` | `GET /api/admin/agenda` |
-| `skip inválido.` / `limit inválido.` | `GET /api/admin/reservas` |
+| `Formato de fecha inválido en desde. Usá YYYY-MM-DD.` | `GET /api/admin/agenda` |
+| `skip inválido. Tiene que ser un número entero mayor o igual a 0.` | `GET /api/admin/reservas` |
+| `limit inválido. Tiene que ser un número entre 1 y 200.` | `GET /api/admin/reservas` |
 | `Se esperaba una lista de reservas.` | import |
 
 ---

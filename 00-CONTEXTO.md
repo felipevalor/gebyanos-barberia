@@ -228,6 +228,15 @@ Códigos:
 1. **El backend valida siempre, aunque el frontend ya haya filtrado.** Un slot puede ocuparse entre que la UI lo muestra y el cliente hace click.
 2. **Los mensajes de error al usuario son contrato.** No los reescribas ni los "mejores" — el frontend y los tests dependen de ellos. Si uno te parece mal, marcalo y lo decidimos; no lo cambies solo.
 3. **Todos los mensajes van en voseo rioplatense.** `Usá`, `Elegí`, `Revisá`, `Debés`, `Intentá`, `Reagendalos`. Nunca tuteo (`Usa`, `Intenta`) ni usted (`Use`, `Intente`). Es un producto para una barbería argentina. Si escribís un mensaje nuevo, seguí esa voz — y si ves uno que no la sigue, marcalo.
+
+   **Y distinguí dos audiencias**, porque no se escriben igual:
+
+   | Tipo | Quién lo ve | Cómo se escribe |
+   |---|---|---|
+   | **De cara al humano** | El cliente reservando, el barbero en el panel | Voseo, cálido, accionable. Dice qué hacer, no qué falló. `Revisá el teléfono...`, `Elegí otro.` |
+   | **De diagnóstico** | Solo un frontend con bug lo dispara | Preciso. Puede nombrar el parámetro y el formato esperado. `Formato de fecha inválido en desde. Usá YYYY-MM-DD.` |
+
+   Un error de forma que ningún humano debería ver **conviene** que nombre el parámetro: le ahorra media hora a quien lo esté depurando. Un error que ve el cliente nunca menciona nombres técnicos.
 4. **Google Calendar y WhatsApp son best-effort.** Si fallan, la reserva ya está confirmada. Log y seguir. Nunca tires una reserva por una integración caída.
 5. **Soft delete en reservas.** Nunca `DELETE` físico. `estado = 'cancelada'` + `cancelada_at`. Todas las queries de disponibilidad filtran `estado = 'activa'`.
 6. **Turnos contiguos NO solapan.** La fórmula de intersección usa comparadores estrictos (`<`, `>`). Si usás `<=`/`>=` rompés la agenda entera.

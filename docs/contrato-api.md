@@ -556,8 +556,9 @@ carácter por carácter.
 | `Año inválido.` | 400 | `/disponibilidad/mes` |
 | `barberoId es obligatorio.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
 | `Barbero inválido.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
-| `Formato de fecha inválido en desde.` | 400 | `GET /api/admin/agenda` |
-| `limit inválido.` / `skip inválido.` | 400 | `GET /api/admin/reservas` |
+| `Formato de fecha inválido en desde. Usá YYYY-MM-DD.` | 400 | `GET /api/admin/agenda` |
+| `limit inválido. Tiene que ser un número entre 1 y 200.` | 400 | `GET /api/admin/reservas` |
+| `skip inválido. Tiene que ser un número entero mayor o igual a 0.` | 400 | `GET /api/admin/reservas` |
 | `No autorizado` | 401 | todo `/api/admin/*` autenticado |
 | `No se pueden importar más de 500 filas por vez.` | 400 | `POST /api/admin/reservas/importar` |
 | `Prohibido` | 403 | import sin ser owner; tocar la reserva de otro |
@@ -625,7 +626,8 @@ No inventes contratos para esto — se documenta cuando esté construido.
 
 | Qué | Ruta | Tarea |
 |---|---|---|
-| Configuración (horarios, feriados, catálogos) | `/api/admin/*` | Fase 3 |
+| Clientes y export CSV | `/api/admin/clientes*` | 3.3 |
+| Barberos, servicios, promos, catálogo, negocio, stats | `/api/admin/*` | 3.4 |
 | Consulta y cancelación con magic link | `/api/mi-turno/*` | Fase 5 |
 
 `/api/mi-turno` está montado pero sin rutas: cualquier request devuelve **404**
@@ -741,7 +743,7 @@ Solo devuelve `estado: "activa"`. Los turnos cancelados no aparecen.
 
 | Error | Código |
 |---|---|
-| `Formato de fecha inválido en desde.` / `en hasta.` | 400 |
+| `Formato de fecha inválido en desde. Usá YYYY-MM-DD.` / `en hasta.` | 400 |
 
 ## `GET /api/admin/reservas`
 
@@ -762,7 +764,8 @@ Ordenado por fecha y hora **descendente** — lo más reciente primero.
 
 | Error | Código |
 |---|---|
-| `skip inválido.` / `limit inválido.` | 400 |
+| `skip inválido. Tiene que ser un número entero mayor o igual a 0.` | 400 |
+| `limit inválido. Tiene que ser un número entre 1 y 200.` | 400 |
 
 ## `POST /api/admin/reservas`
 
@@ -856,6 +859,143 @@ mandaste, para poder ubicarla en el archivo original.
 | `Prohibido` | 403 |
 | `No se pueden importar más de 500 filas por vez.` | 400 |
 | `Se esperaba una lista de reservas.` | 400 |
+
+## Bloquear + Avisar — el 409 con lista
+
+Cinco operaciones de configuración pueden dejar turnos ya agendados sin
+cobertura. En vez de aplicarse y romper la agenda en silencio, devuelven
+**409 con la lista de turnos en conflicto** en `data`:
+
+```json
+{
+  "ok": false,
+  "error": "Hay 2 turno(s) que quedarían fuera del nuevo horario. Reagendalos o cancelalos antes de cambiar el horario.",
+  "data": [
+    { "id": "0193...", "fecha": "2026-08-24", "hora": "18:00",
+      "nombre": "Juan Pérez", "telefono": "3416513207",
+      "servicio": "Corte", "duracionMin": 30 }
+  ]
+}
+```
+
+**Mostrá la lista.** Es lo que le permite al dueño saber qué reagendar; un
+"no se pudo" pelado lo deja adivinando.
+
+**Cuando hay 409, el cambio NO se aplicó.** Nada quedó a medias.
+
+| Operación | Mensaje |
+|---|---|
+| Cambiar el horario de un día | `Hay {n} turno(s) que quedarían fuera del nuevo horario. Reagendalos o cancelalos antes de cambiar el horario.` |
+| Editar un bloque puntual | el mismo |
+| Cerrar una fecha | `Hay {n} turno(s) ese día. Reagendalos o cancelalos antes de marcarlo como cerrado.` |
+| Desactivar un barbero *(3.4)* | `No se puede desactivar: el barbero tiene {n} turno(s) futuro(s). Reagendalos o cancelalos antes de desactivarlo.` |
+| Borrar un barbero *(3.4)* | `No se puede borrar: el barbero tiene {n} turno(s) futuro(s). Reasignalos o cancelalos antes de borrarlo.` + ` Además tiene clientes recurrentes asociados que se perderían.` |
+
+**Qué cuenta como conflicto:** solo turnos de cliente **futuros y activos**. No
+cuentan los bloqueos administrativos, ni las reservas canceladas, ni los turnos
+pasados.
+
+---
+
+## `GET /api/admin/horarios`
+
+Bloques semanales del barbero. `?barberoId=` sigue las reglas de scoping.
+
+**200:**
+
+```json
+{ "ok": true, "data": [
+  { "id": "0193...", "dow": 1, "activo": 1, "horaInicio": 9, "horaFin": 20 }
+] }
+```
+
+`dow`: **0 = domingo … 6 = sábado**. `horaInicio`/`horaFin` son **enteros**, no
+`"HH:mm"`.
+
+**Varias filas con el mismo `dow` = horario cortado** (mañana y tarde).
+
+⚠️ **Devuelve lo que hay, sin inventar.** Un barbero sin horarios devuelve
+`[]`, y ese barbero **no acepta ninguna reserva** — no está "abierto siempre".
+Un barbero creado por el panel nace con lunes a sábado de 9 a 20.
+
+## `PUT /api/admin/horarios/dia/:dow`
+
+Reemplaza **todos** los bloques de ese día.
+
+Body: `{ bloques: [{ horaInicio, horaFin, activo? }] }` o el array directo.
+`activo` default `true`. **Una lista vacía deja el día cerrado.**
+
+`horaFin` tiene que ser **mayor** que `horaInicio`, los dos enteros entre 0 y 24.
+
+**409** si algún turno futuro de ese día de la semana queda fuera. Un bloque con
+`activo: false` no cubre nada.
+
+**200:** la lista completa de horarios ya actualizada.
+
+| Error | Código |
+|---|---|
+| `Día de la semana inválido. Usá 0 (domingo) a 6 (sábado).` | 400 |
+| `Horario inválido. La hora de fin tiene que ser mayor que la de inicio, y las dos entre 0 y 24.` | 400 |
+| `Se esperaba una lista de bloques.` | 400 |
+
+## `PUT /api/admin/horarios/:id`
+
+Edita un bloque puntual. Body `{ horaInicio, horaFin, activo? }`.
+
+El 409 se calcula sobre el día **completo** después del cambio: si otro bloque
+del mismo día sigue cubriendo el turno, no hay conflicto.
+
+| Error | Código |
+|---|---|
+| `Bloque de horario no encontrado.` | 404 |
+
+## `GET /api/admin/feriados`
+
+Query: `anio` (default: el actual), `barberoId`.
+
+**200:**
+
+```json
+{ "ok": true, "data": {
+  "anio": 2026,
+  "nacionales": [{ "fecha": "2026-05-01", "nombre": "Día del Trabajador", "tipo": "inamovible" }],
+  "propios": [{ "id": "0193...", "fecha": "2026-08-24", "trabaja": 0, "motivo": "Vacaciones" }]
+} }
+```
+
+⚠️ **Son dos cosas distintas y llegan separadas a propósito.**
+
+- **`nacionales`** — informativos. **No cierran la barbería.** Vienen de una API
+  externa; si está caída llega `[]` y `propios` igual funciona.
+- **`propios`** — lo que sí afecta la agenda. `trabaja: 0` cierra la fecha.
+
+El frontend tiene que poder mostrar "es feriado nacional pero abrimos" y
+"cerramos aunque no sea feriado": los dos casos existen.
+
+## `POST /api/admin/feriados`
+
+Body `{ fecha, trabaja, motivo?, barberoId? }`. **Upsert** por
+`(barbero, fecha)`: mandarlo dos veces actualiza, no duplica.
+
+⚠️ **`trabaja: true` NO abre un día sin horario configurado.** Solo evita que un
+`trabaja: false` lo cierre — es un booleano, no trae horas.
+
+**409** al cerrar (`trabaja: false`) una fecha con turnos. Abrir nunca da 409.
+
+| Error | Código |
+|---|---|
+| `trabaja es obligatorio y tiene que ser true o false.` | 400 |
+| `Formato de fecha inválido. Usá YYYY-MM-DD.` | 400 |
+
+## `DELETE /api/admin/feriados/:id`
+
+Borra el override. Nunca da 409: quitar un cierre solo puede **abrir** un día.
+
+| Error | Código |
+|---|---|
+| `Feriado no encontrado.` | 404 |
+
+---
 
 ## `POST /api/admin/bloqueos`
 

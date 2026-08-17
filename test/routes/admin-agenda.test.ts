@@ -721,8 +721,32 @@ describe('paginado del listado', () => {
     expect(data.limit).toBe(2);
   });
 
-  it('rechaza skip y limit invalidos', async () => {
-    expect((await pedir('/api/admin/reservas?skip=-1', { cookie: cookieA })).status).toBe(400);
-    expect((await pedir('/api/admin/reservas?limit=0', { cookie: cookieA })).status).toBe(400);
+  it('rechaza skip y limit invalidos, diciendo el rango', async () => {
+    // Son mensajes de diagnostico: solo los ve un frontend con un bug, asi que
+    // tienen que decir que se esperaba.
+    const skip = await pedir('/api/admin/reservas?skip=-1', { cookie: cookieA });
+    expect(skip.status).toBe(400);
+    expect((await cuerpoDe(skip)).error).toBe(
+      'skip inválido. Tiene que ser un número entero mayor o igual a 0.',
+    );
+
+    const limit = await pedir('/api/admin/reservas?limit=0', { cookie: cookieA });
+    expect(limit.status).toBe(400);
+    expect((await cuerpoDe(limit)).error).toBe(
+      'limit inválido. Tiene que ser un número entre 1 y 200.',
+    );
+
+    // Pasarse del maximo tambien avisa, en vez de recortar en silencio.
+    const exceso = await pedir('/api/admin/reservas?limit=500', { cookie: cookieA });
+    expect(exceso.status).toBe(400);
+  });
+
+  it('el error de fecha de la agenda nombra el parametro y el formato', async () => {
+    const res = await pedir('/api/admin/agenda?desde=15/3/2027', { cookie: cookieA });
+
+    expect(res.status).toBe(400);
+    expect((await cuerpoDe(res)).error).toBe(
+      'Formato de fecha inválido en desde. Usá YYYY-MM-DD.',
+    );
   });
 });
