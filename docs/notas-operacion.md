@@ -93,10 +93,59 @@ en el plan Free.** 150.000 ya no entra en el presupuesto. Si en algún momento
 hace falta más factor de trabajo, la salida no es un número más alto: es
 **Workers Paid**, con 30 s de CPU por request.
 
-### Verificación obligatoria del primer deploy
+### 🔴 MEDIDO EN PRODUCCIÓN: el edge es 3× más lento, y el techo NO es 10 ms
 
-Hacer un login real y mirar el CPU time en el dashboard. Si supera ~5 ms, bajar
-`ITERACIONES` en `src/services/password.ts`.
+Medición del 2026-08-17 sobre el Worker deployado, leyendo `cpuTime` de
+`wrangler tail`:
+
+| Qué | Local (Apple Silicon) | **Cloudflare edge** | Factor |
+|---|---|---|---|
+| Una derivación PBKDF2 de 50.000 iteraciones | 3,83 ms | **~11,6 ms** | **3,0×** |
+| Un request de login completo | — | **20–57 ms de CPU** | |
+
+**El hardware del edge es tres veces más lento que la máquina de desarrollo.**
+Con 100.000 iteraciones una derivación costaría ~23 ms.
+
+**Y el techo real de este Worker no son 10 ms: son ~1,8 segundos.** Medido
+haciendo N derivaciones en un request hasta que Cloudflare lo cortara:
+
+```
+n=150 derivaciones → 200 OK    (~1,2 s de CPU)
+n=200 derivaciones → 503       outcome: exceededCpu, cpuTime: 1803
+```
+
+**Las dos cosas juntas cambian el análisis:**
+
+1. Si el límite fuera realmente de 10 ms, **el login fallaría con cualquier
+   configuración**: los 11,6 ms de la derivación ya lo superan, sin contar el
+   resto del request. Funciona porque el límite efectivo es ~1,8 s.
+2. O sea que **la restricción de 10 ms que motivó elegir PBKDF2 sobre BCrypt no
+   aplica a este deployment.** Hay que averiguar por qué — lo más probable es
+   que la cuenta esté en Workers Paid, lo que contradice el "free tier, sin
+   excepciones" de `00-CONTEXTO.md`.
+
+⚠️ **Pendiente de confirmar con el dueño de la cuenta: qué plan tiene.** Si
+alguna vez pasa a un plan con techo real de 10 ms, el login se rompe con
+50.000 iteraciones y también con 25.000.
+
+### Cómo se midió, para poder repetirlo
+
+`performance.now()` **está congelado dentro del Worker en producción**
+(mitigación de Spectre): devuelve 0.000 siempre. No sirve para medir.
+
+Lo que sí funciona:
+
+1. Un endpoint temporal que corre N derivaciones en un request.
+2. `wrangler tail --format json` y leer `cpuTime` de cada evento.
+3. La pendiente entre dos valores de N da el costo por derivación:
+   `(cpu(n=100) − cpu(n=10)) / 90`.
+4. Subir N hasta que aparezca `outcome: exceededCpu` da el techo real.
+
+El endpoint de diagnóstico se borró apenas terminó la medición.
+
+### Verificación del primer deploy — HECHA
+
+Si se cambian las iteraciones, repetir la medición con el método de arriba.
 
 Cambiar el número **no invalida ningún hash existente**: las iteraciones viven
 dentro del hash (`pbkdf2$50000$sal$hash`) y cada uno se verifica con las suyas.
@@ -108,6 +157,41 @@ contraseña. Hay tests que lo fijan.
 `test/services/password.test.ts` falla si una verificación supera **6 ms** — no
 10. Con el umbral en 10 recién avisaría cuando ya no queda margen para el resto
 del request, y la medición local es optimista respecto del edge.
+
+---
+
+## 🔴 El seed es SOLO local. Nunca contra una base alcanzable.
+
+`src/db/seed.sql` trae credenciales de desarrollo **en texto plano en el
+repositorio público**: `gaby` / `gebyanos-dev-2026`.
+
+**Si esa base queda alcanzable con ese usuario cargado, cualquiera que lea el
+repo entra al panel.** No hace falta ningún ataque: la contraseña está escrita
+en el archivo.
+
+```bash
+wrangler d1 execute barberia --local  --file=./src/db/seed.sql   # ✅ siempre
+wrangler d1 execute barberia --remote --file=./src/db/seed.sql   # 🔴 NUNCA
+```
+
+Lo mismo vale para cualquier base de staging o preview que tenga una URL
+pública. El seed existe para levantar el entorno local en un comando, nada más.
+
+**El script `db:seed:local` de `package.json` ya lleva `--local` fijo.** No
+agregar una variante remota.
+
+### Cómo se crean los usuarios reales
+
+Uno por uno, generando la contraseña en el momento y guardando **solo el hash**
+en la base:
+
+1. generar una contraseña aleatoria fuerte (≥ 20 caracteres)
+2. hashearla con `hashPassword()` — PBKDF2, 50.000 iteraciones
+3. `INSERT` del barbero con el hash, nunca con el texto plano
+4. entregar la contraseña por un canal fuera de banda y borrarla de donde
+   quedó
+
+La contraseña en claro no va al repositorio, ni a un commit, ni a un log.
 
 ---
 
