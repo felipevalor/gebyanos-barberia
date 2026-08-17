@@ -15,7 +15,58 @@ inverso de que 2026 **no** es bisiesto. El resto de `dates.ts` también quedó.
 
 ---
 
+## ⚠️ Tarea 2.4 — el paso 10 de las validaciones es INALCANZABLE
+
+**Decisión pendiente del autor de la spec.**
+
+La tarea 2.4 numera las validaciones así:
+
+```
+ 8. evaluarSlot() === 'abierto'   → mensaje de mensajeCliente()
+ 9. cumpleAnticipacion()          → "Debés reservar con al menos N minutos..."
+10. Hora parseable HH:mm          → "Formato de hora inválido."
+```
+
+El paso 10 nunca se alcanza. Una hora que pasa el regex de forma
+(`^\d{2}:\d{2}$`) pero es imposible — `"99:99"`, `"24:00"` — cae siempre en el
+paso 8: `evaluarSlot` la calcula fuera de todos los bloques y devuelve
+`fueraDeHorario`.
+
+**Comportamiento real hoy:** `"99:99"` → `El horario elegido está fuera del
+horario de atención.`
+
+**Se dejó el orden de la spec** porque el criterio de aceptación lo pide
+explícitamente y mover el paso cambiaría un mensaje que es contrato. El test
+`test/services/reserva.test.ts` documenta el comportamiento real, no el
+deseado.
+
+Para que el paso 10 sirva, tendría que correr **antes** del 8.
+
+---
+
+## Tarea 2.6 — falta el rate limit en `POST /api/reservas`
+
+El endpoint está sin rate limit. La spec de la 2.4 menciona
+`429 Demasiados intentos. Intenta más tarde.` pero el `RateLimiter` es la
+tarea 2.6. El seam está marcado con un comentario en `src/routes/public.ts`.
+
+---
+
+## Tarea 2.4 — un mensaje de error inventado
+
+`Teléfono inválido. Ingresá un número argentino de 10 dígitos.`
+
+Es el **único** string de error de este endpoint que no es transcripción
+textual de la spec: la spec lista el paso 5 como "Normalizar teléfono" sin
+mensaje de rechazo. Si hay un texto de producción para este caso, reemplazarlo.
+
+---
+
 ## Fase 2 — validar teléfono con `esTelefonoArgentino`, no con `normalizeTel`
+
+**✅ HECHO en la tarea 2.4** para `POST /api/reservas`. Queda pendiente para
+los bordes de las fases 3 y 5 (alta de cliente desde el panel, carga de
+recurrentes).
 
 En el endpoint de reservas, la validación de teléfono tiene que usar
 **`esTelefonoArgentino(raw)`**, no alcanza con `normalizeTel`.

@@ -10,6 +10,7 @@ import {
 } from '../services/publico';
 import { disponibilidadDelDia, disponibilidadDelMes } from '../services/disponibilidad';
 import { esFechaValida } from '../domain/dates';
+import { crearReserva, type EntradaReserva } from '../services/reserva';
 
 /**
  * Rutas publicas (cliente anonimo).
@@ -72,6 +73,29 @@ publicRoutes.get('/disponibilidad', noCachear, async (c) => {
       }),
     ),
   );
+});
+
+// ----------------------------------------------------------------- reserva
+
+/**
+ * Rate limit (10 por IP en 15 min → 429) llega en la tarea 2.6.
+ * Ver docs/pendientes.md.
+ */
+publicRoutes.post('/reservas', noCachear, async (c) => {
+  const cuerpo = await c.req.json().catch(() => null);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const resultado = await crearReserva(c.env, cuerpo as EntradaReserva);
+
+  if (resultado.estado === 'exito') {
+    return c.json(ok({ cancelToken: resultado.cancelToken, mensaje: resultado.mensaje }), 200);
+  }
+
+  // datosInvalidos | noDisponible | overlap → 400. Una excepcion no controlada
+  // sube al onError de src/index.ts, que responde 500.
+  return c.json(fail(resultado.error), 400);
 });
 
 publicRoutes.get('/disponibilidad/mes', noCachear, async (c) => {

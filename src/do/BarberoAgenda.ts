@@ -54,10 +54,20 @@ export interface ReservaInput {
   mensaje?: string | null;
   source?: string;
   tipo?: 'turno' | 'bloqueo';
+
+  /**
+   * Si viene, se hace upsert del cliente por telefono ADENTRO de la seccion
+   * critica: buscar por telefono, actualizar el nombre si existe, crearlo si
+   * no. Fuera de la serializacion, dos reservas simultaneas del mismo
+   * telefono podrian crear dos clientes.
+   *
+   * El telefono tiene que llegar ya normalizado.
+   */
+  upsertCliente?: { nombre: string; telefono: string } | undefined;
 }
 
 export type ReservaResult =
-  | { estado: 'exito'; reservaId: string; cancelToken: string }
+  | { estado: 'exito'; reservaId: string; cancelToken: string; clienteId: string | null }
   | { estado: 'overlap'; conflicto: string | null }
   | { estado: 'error'; detalle: string };
 
@@ -117,12 +127,47 @@ export class BarberoAgenda extends DurableObject<Env> {
     return results.map((r) => ({ hora: r.hora, duracionMin: r.duracion_min }));
   }
 
+  /**
+   * Busca el cliente por telefono; actualiza el nombre si existe, lo crea si
+   * no. Devuelve su id.
+   */
+  async #upsertCliente(nombre: string, telefono: string): Promise<string> {
+    const existente = await this.env.DB.prepare(
+      'SELECT id FROM clientes WHERE telefono = ? LIMIT 1',
+    )
+      .bind(telefono)
+      .first<{ id: string }>();
+
+    const ahora = new Date().toISOString();
+
+    if (existente) {
+      await this.env.DB.prepare('UPDATE clientes SET nombre = ?, updated_at = ? WHERE id = ?')
+        .bind(nombre, ahora, existente.id)
+        .run();
+      return existente.id;
+    }
+
+    const id = uuidv7();
+    await this.env.DB.prepare(
+      'INSERT INTO clientes (id, nombre, telefono, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind(id, nombre, telefono, ahora, ahora)
+      .run();
+    return id;
+  }
+
   async #reservarSerializado(input: ReservaInput): Promise<ReservaResult> {
     const existentes = await this.#reservasActivas(input.barberoId, input.fecha);
 
     // Detecta el solapamiento PARCIAL, que el indice unico no puede ver.
     const { overlap, conflicto } = checkOverlap(input.hora, input.duracionMin, existentes);
     if (overlap) return { estado: 'overlap', conflicto };
+
+    // Recien despues de saber que el slot esta libre: no se crean clientes
+    // por intentos que van a rebotar.
+    const clienteId = input.upsertCliente
+      ? await this.#upsertCliente(input.upsertCliente.nombre, input.upsertCliente.telefono)
+      : (input.clienteId ?? null);
 
     const reservaId = uuidv7();
     const cancelToken = uuidv7();
@@ -138,7 +183,7 @@ export class BarberoAgenda extends DurableObject<Env> {
         .bind(
           reservaId,
           input.barberoId,
-          input.clienteId ?? null,
+          clienteId,
           input.servicioId ?? null,
           input.nombre,
           input.telefono,
@@ -160,6 +205,6 @@ export class BarberoAgenda extends DurableObject<Env> {
       throw e;
     }
 
-    return { estado: 'exito', reservaId, cancelToken };
+    return { estado: 'exito', reservaId, cancelToken, clienteId };
   }
 }

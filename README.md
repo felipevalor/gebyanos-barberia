@@ -32,9 +32,28 @@ Y después, tarea por tarea:
 | `05-FASE-5-magic-links-recurrentes.md` | Magic links, recurrentes, cron automático | 5.1 a 5.3 |
 | `06-FASE-6-provisioning.md` | Una instancia por barbería: provisioning y operación | 6.1 a 6.5 |
 
-**29 tareas en total.**
+### Track de frontend — agente y rama aparte
 
-La Fase 6 es **opcional y va al final**: solo hace falta cuando quieras atender más de una barbería. Las fases 1 a 5 dejan el sistema completo para una.
+| Archivo | Contenido | Tareas |
+|---|---|---|
+| `FE-1-cimientos-y-sitio-publico.md` | Stack, cliente de API, landing, flujo de reserva, mi-turno | FE-1.1 a FE-1.4 |
+| `FE-2-panel-admin.md` | Login, agenda, reservas, clientes, recurrentes, config | FE-2.1 a FE-2.8 |
+
+**41 tareas en total** (29 de backend + 12 de frontend).
+
+## El orden real, que no es el de los números
+
+Las dependencias no son lineales. Esto es lo que desbloquea qué:
+
+| Cuando cierra | Se desbloquea |
+|---|---|
+| Backend tarea **2.4** | **FE-1** — el flujo de reserva completo |
+| Backend **Fase 3** | **FE-2** — el panel admin |
+| Aparece una segunda barbería | **Fase 6** — provisioning |
+
+O sea: el frontend corre **en paralelo** a las fases 3, 4 y 5 del backend, en otra rama y con otro agente. Y la Fase 6 no es "lo último", es "cuando haga falta" — sin frontend no lanzás nada, sin provisioning sí.
+
+**El contrato de API se genera cuando cierre la tarea 2.4**, leyendo el código real. Hasta entonces el frontend no debe inventar contratos.
 
 ## El orden importa
 

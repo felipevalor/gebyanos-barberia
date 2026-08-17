@@ -21,6 +21,15 @@ app.notFound((c) => c.json(fail('No encontrado.'), 404));
 
 app.onError((err, c) => {
   console.error('error no controlado', err);
+
+  // El mensaje de 500 de la reserva es contrato: transcripcion textual.
+  if (c.req.method === 'POST' && c.req.path === '/api/reservas') {
+    return c.json(
+      fail('Ocurrió un error al procesar la reserva. Por favor, reintenta.'),
+      500,
+    );
+  }
+
   return c.json(fail('Error interno.'), 500);
 });
 
