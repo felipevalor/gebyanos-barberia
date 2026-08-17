@@ -25,3 +25,20 @@ describe('ruta inexistente', () => {
     expect(await response.json()).toEqual({ ok: false, error: 'No encontrado.' });
   });
 });
+
+/**
+ * Afirmaciones de docs/contrato-api.md que no tenian test propio.
+ * Si esto cambia, el contrato queda mintiendo.
+ */
+describe('routers montados pero vacios', () => {
+  for (const ruta of ['/api/admin', '/api/admin/auth', '/api/mi-turno', '/api/mi-turno/abc']) {
+    it(`${ruta} responde 404 con el sobre de error`, async () => {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(new Request(`http://localhost${ruta}`), env, ctx);
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ ok: false, error: 'No encontrado.' });
+    });
+  }
+});
