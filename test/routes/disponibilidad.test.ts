@@ -116,9 +116,9 @@ describe('validacion de parametros', () => {
     [`/api/disponibilidad?barberoId=${BARBERO}&fecha=2027-3-15`, 'Formato de fecha inválido.'],
     ['/api/disponibilidad/mes?anio=2027&mes=3', 'barberoId es obligatorio.'],
     [`/api/disponibilidad/mes?barberoId=${BARBERO}&mes=3`, 'Año inválido.'],
-    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027&mes=13`, 'Mes inválido. Use 1 a 12.'],
-    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027&mes=0`, 'Mes inválido. Use 1 a 12.'],
-    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027`, 'Mes inválido. Use 1 a 12.'],
+    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027&mes=13`, 'Mes inválido. Usá 1 a 12.'],
+    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027&mes=0`, 'Mes inválido. Usá 1 a 12.'],
+    [`/api/disponibilidad/mes?barberoId=${BARBERO}&anio=2027`, 'Mes inválido. Usá 1 a 12.'],
   ];
 
   for (const [url, error] of casos) {

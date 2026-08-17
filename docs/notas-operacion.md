@@ -54,7 +54,7 @@ wrangler d1 migrations list barberia --remote   # vacío = todo aplicado
 
 ---
 
-## ⚠️ PBKDF2 usa el 76% del presupuesto de CPU del login
+## ⚠️ PBKDF2 y el presupuesto de 10 ms de CPU del plan Free
 
 **Medido, no estimado** (2026-08-17, workerd 1.20260811.1, promedio de 12
 verificaciones sobre Apple Silicon):
@@ -62,46 +62,52 @@ verificaciones sobre Apple Silicon):
 | Iteraciones | ms por verificación | % del techo de 10 ms |
 |---|---|---|
 | 25.000 | 1,92 | 19% |
-| 50.000 | 3,83 | 38% |
+| **50.000** | **3,83** | **38%** ← el valor en uso |
 | 75.000 | 5,67 | 57% |
-| **100.000** | **7,58** | **76%** ← el valor en uso |
+| 100.000 | 7,58 | 76% |
 | 150.000 | 11,25 | **112% — no entra** |
 
 Es lineal: **~0,076 ms por cada 1.000 iteraciones**.
 
-### Lo que esto significa
-
-**El plan Free da 10 ms de CPU por request.** Un login con 100.000 iteraciones
-consume 7,6 de esos 10. Quedan ~2,4 ms para todo lo demás: parseo del JSON,
-routing, la query a `barberos`, el insert de la sesión y el armado de la
-cookie. Entra, pero sin lugar para descuidos.
-
-**No hay margen para subir el costo.** 150.000 iteraciones ya no entran, así
-que la recomendación habitual de aumentar las iteraciones con el tiempo **no es
-aplicable en el plan Free**. Si en algún momento hace falta más costo, hay que
-cambiar de estrategia, no de número.
-
-### ⚠️ El riesgo que no se puede medir desde acá
+### Por qué 50.000 y no 100.000
 
 La medición es sobre **una máquina de desarrollo**, y el CPU del edge de
-Cloudflare puede ser más lento. Si lo fuera un 30%, 100.000 iteraciones darían
-~9,9 ms y el login quedaría al borde de un
-`Worker exceeded CPU time limit`.
+Cloudflare puede ser más lento. Con 100.000 iteraciones (7,6 ms) un edge 30%
+más lento daría ~9,9 ms: el login al borde de un `Worker exceeded CPU time`.
+Con 50.000 el mismo escenario da ~5 ms y sigue habiendo margen.
 
-**Verificar en producción antes de confiar.** Al primer deploy, hacer un login
-real y mirar el CPU time en los logs del dashboard. Si supera ~8 ms, bajar
-`ITERACIONES` en `src/services/password.ts` a 75.000 (5,7 ms) o 50.000
-(3,8 ms).
+**La pérdida de seguridad es menor de lo que parece.** OWASP recomienda hoy
+~600.000 iteraciones para PBKDF2-SHA256: ni 50.000 ni 100.000 se acercan, o sea
+que el presupuesto de CPU del plan Free nos deja debajo de la recomendación de
+cualquier forma. Aceptado eso, un bit de factor de trabajo vale menos que un
+login que no se cae.
 
-Bajar iteraciones **no invalida los hashes existentes**: cada hash guarda las
-suyas y se verifica con esas. `necesitaRehash()` detecta los que quedaron
-distintos de la constante actual.
+**La compensación es el largo de la contraseña: mínimo 12 caracteres**
+(`LARGO_MIN_PASSWORD`). Cada carácter extra multiplica el espacio de búsqueda;
+duplicar las iteraciones solo lo duplica.
+
+### Restricción de arquitectura, no nota al pie
+
+**La recomendación estándar de subir las iteraciones con los años es imposible
+en el plan Free.** 150.000 ya no entra en el presupuesto. Si en algún momento
+hace falta más factor de trabajo, la salida no es un número más alto: es
+**Workers Paid**, con 30 s de CPU por request.
+
+### Verificación obligatoria del primer deploy
+
+Hacer un login real y mirar el CPU time en el dashboard. Si supera ~5 ms, bajar
+`ITERACIONES` en `src/services/password.ts`.
+
+Cambiar el número **no invalida ningún hash existente**: las iteraciones viven
+dentro del hash (`pbkdf2$50000$sal$hash`) y cada uno se verifica con las suyas.
+Es lo que permitió bajar de 100.000 a 50.000 sin que nadie perdiera su
+contraseña. Hay tests que lo fijan.
 
 ### El canario
 
-`test/services/password.test.ts` tiene un test que falla si una verificación
-supera los 10 ms. No sustituye la medición en producción, pero avisa si alguien
-sube las iteraciones sin medir.
+`test/services/password.test.ts` falla si una verificación supera **6 ms** — no
+10. Con el umbral en 10 recién avisaría cuando ya no queda margen para el resto
+del request, y la medición local es optimista respecto del edge.
 
 ---
 

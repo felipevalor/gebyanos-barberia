@@ -105,7 +105,7 @@ describe('seed', () => {
       password_hash: string | null;
     }>();
 
-    expect(row?.password_hash).toMatch(/^pbkdf2\$100000\$/);
+    expect(row?.password_hash).toMatch(/^pbkdf2\$50000\$/);
     // La password del comentario del seed tiene que ser LA password: un
     // comentario que miente sobre las credenciales cuesta media hora.
     expect(await verificarPassword('gebyanos-dev-2026', row?.password_hash)).toBe(true);

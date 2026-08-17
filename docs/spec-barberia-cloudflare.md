@@ -542,7 +542,7 @@ El algoritmo del endpoint público de horarios. Cuatro cortes tempranos y dos fi
 | `clienteTelefono` | requerido, máx 20 | `clienteTelefono es obligatorio.` / `El teléfono no puede superar los 20 caracteres.` |
 | `mensaje` | máx 500 | `El mensaje no puede superar los 500 caracteres.` |
 
-**Rate limit:** 10 por IP en 15 min. Si excede: `429` con `Demasiados intentos. Intenta más tarde.`
+**Rate limit:** 10 por IP en 15 min. Si excede: `429` con `Demasiados intentos. Intentá más tarde.`
 
 **Validaciones de negocio, en orden:**
 
@@ -636,7 +636,7 @@ Set-Cookie: admin_token={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires
 
 **El middleware de auth lee SOLO la cookie.** Ignorá deliberadamente el header `Authorization: Bearer`. Es la mitigación de XSS del diseño actual: si un script roba el token, no puede reenviarlo como header porque el backend no acepta esa vía, y la cookie es `HttpOnly` así que JS no la ve.
 
-**Rate limit de login: 10 fallos por IP en 15 min, y solo se consume en los intentos fallidos** — un login correcto no gasta cupo. Excedido: `429 Demasiados intentos. Intente más tarde.` Credenciales malas: `401 Usuario o contraseña incorrectos`.
+**Rate limit de login: 10 fallos por IP en 15 min, y solo se consume en los intentos fallidos** — un login correcto no gasta cupo. Excedido: `429 Demasiados intentos. Intentá más tarde.` Credenciales malas: `401 Usuario o contraseña incorrectos`.
 
 **Hashing de passwords — decisión pendiente.** El sistema actual usa BCrypt con cost 12, más una migración transparente de hashes SHA-256 legacy (si el hash no empieza con `$2`, verifica SHA-256 y rehashea a BCrypt al vuelo).
 

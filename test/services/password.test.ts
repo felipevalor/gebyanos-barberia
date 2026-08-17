@@ -3,7 +3,9 @@ import {
   hashPassword,
   verificarPassword,
   necesitaRehash,
+  validarLargoPassword,
   ITERACIONES,
+  LARGO_MIN_PASSWORD,
 } from '../../src/services/password';
 
 const PASS = 'una password razonable 123';
@@ -73,7 +75,6 @@ describe('verificarPassword', () => {
   });
 
   it('verifica con las iteraciones GUARDADAS, no con las actuales', async () => {
-    // Es lo que permite subir el costo sin invalidar los hashes viejos.
     const viejo = await hashPassword(PASS, 1000);
 
     expect(viejo).toContain('$1000$');
@@ -82,10 +83,70 @@ describe('verificarPassword', () => {
 
   it('el hash del seed verifica con la password documentada', async () => {
     const delSeed =
-      'pbkdf2$100000$6yE+h07asnkJu36+yxivJw==$oVq144e9SHVLnHpCnwBbTRblEaILa2aqRu6sLK3hKgk=';
+      'pbkdf2$50000$XBrvvidHIErtlOxua7QorA==$MvFVD38EF+H1BXd+MH/1UY5YfOVGWy4uxQFdDQl+UXM=';
 
     expect(await verificarPassword('gebyanos-dev-2026', delSeed)).toBe(true);
     expect(await verificarPassword('otra', delSeed)).toBe(false);
+  });
+});
+
+/**
+ * El numero de iteraciones vive DENTRO del hash, no en una constante del
+ * codigo. Es lo que permite cambiarlo — para arriba o para abajo — sin
+ * invalidar las contraseñas ya guardadas.
+ *
+ * Sin esto, bajar de 100.000 a 50.000 habria dejado afuera a todo el que ya
+ * tenia contraseña.
+ */
+describe('las iteraciones viajan en el hash', () => {
+  it('cada hash declara con cuantas iteraciones se creo', async () => {
+    for (const iter of [1_000, 50_000, 100_000]) {
+      const hash = await hashPassword(PASS, iter);
+      expect(hash.split('$')[1]).toBe(String(iter));
+    }
+  });
+
+  it('hashes con iteraciones DISTINTAS conviven y verifican todos', async () => {
+    const hashes = await Promise.all(
+      [1_000, 25_000, 50_000, 100_000].map((i) => hashPassword(PASS, i)),
+    );
+
+    for (const hash of hashes) {
+      expect(await verificarPassword(PASS, hash)).toBe(true);
+      expect(await verificarPassword('otra cosa', hash)).toBe(false);
+    }
+  });
+
+  it('bajar la constante NO invalida los hashes creados con mas iteraciones', async () => {
+    // Este es exactamente el caso que se dio: la politica bajo de 100.000 a
+    // 50.000 y ninguna contraseña existente dejo de funcionar.
+    const conLaPoliticaVieja = await hashPassword(PASS, 100_000);
+
+    expect(ITERACIONES).toBe(50_000);
+    expect(await verificarPassword(PASS, conLaPoliticaVieja)).toBe(true);
+    // Y no se marca para rehash: es MAS fuerte que la politica actual.
+    expect(necesitaRehash(conLaPoliticaVieja)).toBe(false);
+  });
+
+  it('un hash mas debil que la politica actual si se marca para rehash', async () => {
+    expect(necesitaRehash(await hashPassword(PASS, 25_000))).toBe(true);
+  });
+});
+
+describe('largo minimo de password', () => {
+  it('exige 12 caracteres', () => {
+    expect(LARGO_MIN_PASSWORD).toBe(12);
+    expect(validarLargoPassword('a'.repeat(11))).toBe(
+      'La contraseña tiene que tener al menos 12 caracteres.',
+    );
+  });
+
+  it('acepta exactamente 12', () => {
+    expect(validarLargoPassword('a'.repeat(12))).toBeNull();
+  });
+
+  it('la password del seed cumple el minimo', () => {
+    expect(validarLargoPassword('gebyanos-dev-2026')).toBeNull();
   });
 });
 
@@ -109,16 +170,18 @@ describe('necesitaRehash', () => {
 
 describe('costo de CPU', () => {
   it('una verificacion entra en el presupuesto de 10 ms del plan Free', async () => {
-    // Medido: ~7,6 ms con 100.000 iteraciones. Ver docs/notas-operacion.md.
-    // Este test es un canario: si alguien sube las iteraciones sin medir, o si
-    // el runtime se vuelve mas lento, salta acá y no en produccion con un
-    // "Worker exceeded CPU time".
+    // Medido: ~3,8 ms con 50.000 iteraciones, el 38% del presupuesto.
+    // Ver docs/notas-operacion.md.
+    //
+    // El umbral es 6 ms, no 10: si fuera 10 el test recien avisaria cuando ya
+    // no hay margen para el resto del request (parseo, query, cookie), y la
+    // medicion local es optimista respecto del edge.
     const hash = await hashPassword(PASS);
 
     const t0 = performance.now();
     await verificarPassword(PASS, hash);
     const ms = performance.now() - t0;
 
-    expect(ms).toBeLessThan(10);
+    expect(ms).toBeLessThan(6);
   });
 });

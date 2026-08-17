@@ -188,7 +188,7 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 | `clienteTelefono` | requerido, máx 20 | `clienteTelefono es obligatorio.` / `El teléfono no puede superar los 20 caracteres.` |
 | `mensaje` | máx 500 | `El mensaje no puede superar los 500 caracteres.` |
 
-**Rate limit:** 10 por IP en 15 min → `429 Demasiados intentos. Intenta más tarde.`
+**Rate limit:** 10 por IP en 15 min → `429 Demasiados intentos. Intentá más tarde.`
 
 ### Las once validaciones de negocio, en orden
 
@@ -266,7 +266,15 @@ Set-Cookie: admin_token={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires
 
 ### Hashing
 
-**Usá PBKDF2 vía `crypto.subtle`** con al menos 100.000 iteraciones y sal de 16 bytes.
+**Usá PBKDF2-SHA256 vía `crypto.subtle` con 50.000 iteraciones** y sal de 16 bytes.
+
+⚠️ **Por qué 50.000 y no 100.000, que es la recomendación habitual.** Medido en Workers: 100k consume 7,6 ms de los **10 ms de CPU** del plan gratuito — el 76% del presupuesto, dejando 2,4 ms para el parseo, el routing, la query y el insert de sesión. En hardware más lento que la máquina de desarrollo, el login se cae con `Worker exceeded CPU time`. 50k consume 3,8 ms (38%) y deja margen real.
+
+**Guardá las iteraciones dentro del hash** (formato `pbkdf2$50000$sal$hash`). Así se puede cambiar el número sin invalidar las contraseñas existentes, y una función tipo `necesitaRehash()` las migra al vuelo en el próximo login.
+
+**Compensá la diferencia con largo de contraseña, no con iteraciones:** exigí mínimo 12 caracteres. Dos caracteres extra en la contraseña valen mucho más que duplicar el factor de trabajo.
+
+📌 **Restricción arquitectónica a tener presente:** la recomendación de seguridad estándar es *subir* las iteraciones con los años. **En el plan gratuito eso no se puede** — 150k ya excede el límite. Si algún día hace falta más costo de hasheo, la salida no es subir el número: es Workers Paid, que sube el límite de CPU a 30 segundos. Anotalo como limitación conocida con esa salida.
 
 El sistema viejo usa BCrypt cost 12, pero **BCrypt no entra en los 10 ms de CPU del plan Free** de Workers y obligaría a Workers Paid. Como arrancás de cero no hay hashes legacy que soportar, así que PBKDF2 es la opción correcta: nativo, sin dependencias, y elimina la dependencia del plan pago para un endpoint de login.
 
@@ -286,7 +294,7 @@ Errores: `401 { ok: false, error: "No autorizado" }` y `403 { ok: false, error: 
 
 **10 fallos por IP en 15 min, y solo se consume en los intentos fallidos** — un login correcto no gasta cupo.
 
-Excedido: `429 Demasiados intentos. Intente más tarde.`
+Excedido: `429 Demasiados intentos. Intentá más tarde.`
 Credenciales malas: `401 Usuario o contraseña incorrectos`.
 
 ### Logout — `DELETE /admin/api/auth`

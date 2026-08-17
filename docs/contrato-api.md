@@ -390,7 +390,7 @@ se calcula con otra duración y puede pintar días que después no ofrecen nada.
 |---|---|
 | `barberoId es obligatorio.` | falta el param |
 | `Año inválido.` | no es entero, o fuera de 2000–2100 |
-| `Mes inválido. Use 1 a 12.` | no es entero, o fuera de 1–12 |
+| `Mes inválido. Usá 1 a 12.` | no es entero, o fuera de 1–12 |
 | `Barbero inválido.` | el barbero no existe o está desactivado |
 
 ---
@@ -557,7 +557,7 @@ carácter por carácter.
 | `La barbería no atiende esa fecha (feriado o cierre).` | 400 | `POST /reservas` |
 | `La barbería no atiende ese día.` | 400 | `POST /reservas` |
 | `Lo sentimos, este turno acaba de ser reservado por alguien más.` | 400 | `POST /reservas` |
-| `Mes inválido. Use 1 a 12.` | 400 | `/disponibilidad/mes` |
+| `Mes inválido. Usá 1 a 12.` | 400 | `/disponibilidad/mes` |
 | `No encontrado.` | 404 | ruta inexistente, `/negocio` sin datos |
 | `No se puede agendar un turno en el pasado.` | 400 | `POST /reservas` |
 | `No se puede agendar un turno en un horario que ya pasó.` | 400 | `POST /reservas` |

@@ -118,7 +118,7 @@ publicRoutes.get('/disponibilidad/mes', noCachear, async (c) => {
     return c.json(fail('Año inválido.'), 400);
   }
   if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
-    return c.json(fail('Mes inválido. Use 1 a 12.'), 400);
+    return c.json(fail('Mes inválido. Usá 1 a 12.'), 400);
   }
   if (!(await barberoValido(c.env.DB, barberoId))) {
     return c.json(fail('Barbero inválido.'), 400);

@@ -113,7 +113,33 @@ Detalle y tabla completa en [`notas-operacion.md`](./notas-operacion.md).
 
 ---
 
-## Tarea 2.6 — dos mensajes de rate limit que difieren en una letra
+## ⚠️ Dos mensajes de la spec no están en voseo
+
+Barrido de voz sobre los 26 mensajes del sistema (2026-08-17). Todo el sistema
+habla en **voseo** — *Debés reservar*, *Revisá el teléfono*, *Configurá la
+fecha ancla*, *Intentá más tarde*. Quedan dos excepciones, las dos
+transcripción textual de la spec, así que **no se cambiaron sin confirmar**:
+
+| Mensaje | Voz | Endpoint |
+|---|---|---|
+| `Formato de hora inválido. **Use** HH:mm.` | usted | `POST /api/reservas` |
+| `Ocurrió un error al procesar la reserva. Por favor, **reintenta**.` | tuteo | `POST /api/reservas` |
+
+En voseo serían `Usá HH:mm.` y `Por favor, reintentá.`
+
+Un tercero — `Mes inválido. Use 1 a 12.` — era **mío**: le había copiado el
+estilo al primero. Ya está corregido a `Mes inválido. Usá 1 a 12.`
+
+Los dos que quedan son contrato: si se cambian, hay que actualizar el
+contrato de API y los tests que los fijan.
+
+---
+
+## ✅ Tarea 2.6 — mensaje de rate limit unificado
+
+Los dos textos de la spec diferían en una letra (`Intenta` contra `Intente`).
+Unificados a **`Demasiados intentos. Intentá más tarde.`** — voseo, como el
+resto del sistema. Aplica a `POST /api/reservas` y a `POST /api/admin/auth`.
 
 La spec usa dos textos distintos para el mismo tipo de error:
 

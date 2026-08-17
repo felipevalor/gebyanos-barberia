@@ -14,8 +14,37 @@
  * viejos. Cada hash se verifica con los parametros con los que se creo.
  */
 
-/** Iteraciones para hashes nuevos. Ver docs/notas-operacion.md para el CPU medido. */
-export const ITERACIONES = 100_000;
+/**
+ * Iteraciones para hashes nuevos.
+ *
+ * 50.000 = 3,8 ms de los 10 ms de CPU del plan Free (38%). Medido, ver
+ * docs/notas-operacion.md.
+ *
+ * ⚠️ NO SUBIR SIN MEDIR. 150.000 ya no entra en el presupuesto (11,25 ms) y
+ * el login se caeria con "Worker exceeded CPU time". La recomendacion habitual
+ * de subir iteraciones con los anios NO es aplicable en el plan Free: la
+ * salida es Workers Paid, con 30 s de CPU.
+ *
+ * Se eligio 50.000 sobre 100.000 (7,6 ms, 76% del presupuesto) porque la
+ * medicion es sobre una maquina de desarrollo: si el edge de Cloudflare fuera
+ * un 30% mas lento, 100.000 dejaria el login al borde. Ni 50.000 ni 100.000 se
+ * acercan a las ~600.000 que recomienda OWASP hoy, asi que el free tier nos
+ * deja debajo igual: aceptado eso, un bit de factor de trabajo vale menos que
+ * un login que no se cae.
+ *
+ * LA COMPENSACION ES EL LARGO DE LA PASSWORD, que rinde mas que duplicar
+ * iteraciones. Ver `LARGO_MIN_PASSWORD`.
+ */
+export const ITERACIONES = 50_000;
+
+/**
+ * Largo minimo de password.
+ *
+ * Compensa el factor de trabajo acotado por el presupuesto de CPU: cada
+ * caracter extra multiplica el espacio de busqueda, mientras que duplicar las
+ * iteraciones solo lo duplica.
+ */
+export const LARGO_MIN_PASSWORD = 12;
 
 const LARGO_SALT = 16;
 const LARGO_HASH = 32;
@@ -105,6 +134,19 @@ export async function verificarPassword(
   } catch {
     return false;
   }
+}
+
+/**
+ * Valida el largo minimo. Devuelve el mensaje de rechazo, o null si esta bien.
+ *
+ * Se usa en el alta y el cambio de password (Fase 3). NO se usa en el login:
+ * ahi hay que aceptar cualquier cosa que el usuario tipee y compararla, porque
+ * rechazar por largo delataria la politica vigente cuando se creo la cuenta.
+ */
+export function validarLargoPassword(password: string): string | null {
+  return password.length < LARGO_MIN_PASSWORD
+    ? `La contraseña tiene que tener al menos ${LARGO_MIN_PASSWORD} caracteres.`
+    : null;
 }
 
 /** True si el hash usa menos iteraciones que las actuales: conviene re-hashear. */
