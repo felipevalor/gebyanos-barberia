@@ -54,6 +54,57 @@ wrangler d1 migrations list barberia --remote   # vacío = todo aplicado
 
 ---
 
+## ⚠️ PBKDF2 usa el 76% del presupuesto de CPU del login
+
+**Medido, no estimado** (2026-08-17, workerd 1.20260811.1, promedio de 12
+verificaciones sobre Apple Silicon):
+
+| Iteraciones | ms por verificación | % del techo de 10 ms |
+|---|---|---|
+| 25.000 | 1,92 | 19% |
+| 50.000 | 3,83 | 38% |
+| 75.000 | 5,67 | 57% |
+| **100.000** | **7,58** | **76%** ← el valor en uso |
+| 150.000 | 11,25 | **112% — no entra** |
+
+Es lineal: **~0,076 ms por cada 1.000 iteraciones**.
+
+### Lo que esto significa
+
+**El plan Free da 10 ms de CPU por request.** Un login con 100.000 iteraciones
+consume 7,6 de esos 10. Quedan ~2,4 ms para todo lo demás: parseo del JSON,
+routing, la query a `barberos`, el insert de la sesión y el armado de la
+cookie. Entra, pero sin lugar para descuidos.
+
+**No hay margen para subir el costo.** 150.000 iteraciones ya no entran, así
+que la recomendación habitual de aumentar las iteraciones con el tiempo **no es
+aplicable en el plan Free**. Si en algún momento hace falta más costo, hay que
+cambiar de estrategia, no de número.
+
+### ⚠️ El riesgo que no se puede medir desde acá
+
+La medición es sobre **una máquina de desarrollo**, y el CPU del edge de
+Cloudflare puede ser más lento. Si lo fuera un 30%, 100.000 iteraciones darían
+~9,9 ms y el login quedaría al borde de un
+`Worker exceeded CPU time limit`.
+
+**Verificar en producción antes de confiar.** Al primer deploy, hacer un login
+real y mirar el CPU time en los logs del dashboard. Si supera ~8 ms, bajar
+`ITERACIONES` en `src/services/password.ts` a 75.000 (5,7 ms) o 50.000
+(3,8 ms).
+
+Bajar iteraciones **no invalida los hashes existentes**: cada hash guarda las
+suyas y se verifica con esas. `necesitaRehash()` detecta los que quedaron
+distintos de la constante actual.
+
+### El canario
+
+`test/services/password.test.ts` tiene un test que falla si una verificación
+supera los 10 ms. No sustituye la medición en producción, pero avisa si alguien
+sube las iteraciones sin medir.
+
+---
+
 ## Un Durable Object NO serializa las llamadas a D1
 
 **"Un DO procesa un request a la vez" vale para `ctx.storage`, no para llamadas

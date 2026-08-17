@@ -165,7 +165,7 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 - [ ] Hoy, los slots que no cumplen la anticipación de 30 min no aparecen
 - [ ] Un turno existente de 60 min tapa dos slots de 30
 - [ ] Los bloqueos administrativos ocupan el slot igual que un turno
-- [ ] El endpoint de mes no hace más de 5 queries a D1
+- [ ] El endpoint de mes hace una cantidad **constante** de queries a D1, no proporcional a los días del mes — medido a nivel endpoint, no de servicio. (La versión ingenua, llamando 31 veces al cálculo de día, hacía 107.) El número exacto no importa mientras no escale con el mes
 - [ ] Los días más allá de la ventana de 14 días no están disponibles
 
 ---

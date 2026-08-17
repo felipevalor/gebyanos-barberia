@@ -1,6 +1,7 @@
 import { env, applyD1Migrations } from 'cloudflare:test';
 import { describe, it, expect, beforeAll } from 'vitest';
 import seedSql from '../../src/db/seed.sql?raw';
+import { verificarPassword } from '../../src/services/password';
 
 /**
  * El seed es un criterio de aceptacion de la tarea 1.2: un barbero owner, 3
@@ -99,11 +100,14 @@ describe('seed', () => {
     expect(horarios?.n).toBe(12);
   });
 
-  it('el owner NO tiene password todavia: PBKDF2 llega en la 2.5', async () => {
-    // Ver docs/pendientes.md. Cuando la 2.5 lo cargue, este test cambia.
+  it('el owner tiene un hash PBKDF2 valido y la password documentada', async () => {
     const row = await env.DB.prepare('SELECT password_hash FROM barberos').first<{
       password_hash: string | null;
     }>();
-    expect(row?.password_hash).toBeNull();
+
+    expect(row?.password_hash).toMatch(/^pbkdf2\$100000\$/);
+    // La password del comentario del seed tiene que ser LA password: un
+    // comentario que miente sobre las credenciales cuesta media hora.
+    expect(await verificarPassword('gebyanos-dev-2026', row?.password_hash)).toBe(true);
   });
 });

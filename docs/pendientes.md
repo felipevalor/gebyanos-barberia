@@ -91,8 +91,37 @@ desde el panel, y carga de recurrentes.
 
 ---
 
-## Tarea 2.5 — el seed no tiene password
+## ✅ Tarea 2.5 — el seed ya tiene password — CERRADO 2026-08-17
 
-`src/db/seed.sql` deja `barberos.password_hash` en NULL: el formato de hash
-(PBKDF2) se define en la Fase 2, tarea 2.5. Hasta entonces el owner del seed no
-puede loguearse. Al cerrar la 2.5, actualizar el seed con un hash real.
+`src/db/seed.sql` trae el hash PBKDF2 real del owner. Credenciales de
+desarrollo, documentadas en el propio archivo: `gaby` / `gebyanos-dev-2026`.
+Hay un test que verifica que el comentario no miente sobre la password.
+
+---
+
+## ⚠️ Antes del primer deploy — medir el CPU real del login
+
+PBKDF2 con 100.000 iteraciones consume **7,6 de los 10 ms** de CPU del plan
+Free, medido en una máquina de desarrollo. Si el edge de Cloudflare fuera un
+30% más lento, el login quedaría al borde de un `Worker exceeded CPU time`.
+
+Al primer deploy: hacer un login real y mirar el CPU time en el dashboard. Si
+supera ~8 ms, bajar `ITERACIONES` en `src/services/password.ts`. Bajarlas no
+invalida los hashes existentes.
+
+Detalle y tabla completa en [`notas-operacion.md`](./notas-operacion.md).
+
+---
+
+## Tarea 2.6 — dos mensajes de rate limit que difieren en una letra
+
+La spec usa dos textos distintos para el mismo tipo de error:
+
+| Endpoint | Mensaje |
+|---|---|
+| `POST /api/reservas` (2.4) | `Demasiados intentos. Intenta más tarde.` |
+| `POST /api/admin/auth` (2.5) | `Demasiados intentos. Intent**e** más tarde.` |
+
+`Intenta` contra `Intente`. Puede ser deliberado (tuteo con el cliente, usted
+con el barbero) o un typo arrastrado del sistema viejo. **Confirmar antes de
+implementar la 2.6**, porque una vez que el frontend los matchee son contrato.

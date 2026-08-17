@@ -1,15 +1,22 @@
 -- Seed de datos de prueba: 1 barbero owner, 3 servicios, horarios lunes a sabado.
 -- Idempotente: los IDs son fijos y usa INSERT OR REPLACE / OR IGNORE.
 --
--- password_hash queda NULL a proposito: el hashing PBKDF2 se define en la
--- Fase 2, tarea 2.5. Hasta entonces el owner no puede loguearse.
+-- ⚠️ CREDENCIALES DE DESARROLLO. NO SEMBRAR ESTO EN PRODUCCION.
+--
+--     usuario:  gaby
+--     password: gebyanos-dev-2026
+--
+-- El hash es PBKDF2-SHA256, 100.000 iteraciones, sal de 16 bytes. Es publico
+-- porque esta en el repo: sirve para levantar el entorno local, no para
+-- proteger nada. En produccion el owner se crea con una password propia.
 
 -- Fila unica de configuracion global.
 INSERT OR REPLACE INTO negocio (id, nombre_negocio, timezone) VALUES
   (1, 'Barbería Gebyanos', 'America/Argentina/Buenos_Aires');
 
 INSERT OR REPLACE INTO barberos (id, slug, nombre, tel, activo, orden, rol, password_hash) VALUES
-  ('01920000-0000-7000-8000-000000000001', 'gaby', 'Gaby', '3416513207', 1, 0, 'owner', NULL);
+  ('01920000-0000-7000-8000-000000000001', 'gaby', 'Gaby', '3416513207', 1, 0, 'owner',
+   'pbkdf2$100000$6yE+h07asnkJu36+yxivJw==$oVq144e9SHVLnHpCnwBbTRblEaILa2aqRu6sLK3hKgk=');
 
 INSERT OR REPLACE INTO servicios (id, nombre, duracion_min, precio_centavos, activo, orden, incluye) VALUES
   ('01920000-0000-7000-8000-000000000101', 'Corte',            30,  800000, 1, 0, 'Lavado y peinado'),
