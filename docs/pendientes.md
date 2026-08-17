@@ -329,3 +329,47 @@ filtra, y hay tests de las dos cosas.
 
 **4. Un owner desactivado no cuenta como respaldo.** `esUltimoOwner` filtra
 `activo = 1`: una cuenta que no puede loguearse no salva a nadie del bloqueo.
+
+---
+
+## 🔴 Tarea 4.1 — `_gcal.js` NO está en el historial de ningún repo
+
+La spec dice de recuperarlo antes de escribirlo de nuevo. Se buscó y **no
+existe**:
+
+```
+barberiagebyanos.BE:  0 coincidencias (182 commits)
+barberiagebyanos.FE:  0 coincidencias (191 commits)
+gebyanos:             0 coincidencias (1 commit)
+```
+
+Se buscó por nombre de archivo en toda la historia (`--diff-filter=D` incluido)
+y por contenido (`oauth2.googleapis.com`, `RS256`, `calendar/v3`) en todos los
+commits. Nada. Tampoco está `migration/PLAN_MIGRACION.md`, que es de donde la
+spec saca la cita de "líneas 1-208". Vivía en el repo original de Cloudflare
+Pages, que no está entre los tres que sobreviven.
+
+**Lo que sí existe** es el puerto a .NET,
+`barberiagebyanos.BE/Barberia.Api/Services/GoogleCalendarService.cs`, cuyo
+docstring dice ser "puerto de las funciones de Google Calendar en _gcal.js
+(líneas 1–208)". De ahí salieron:
+
+- los strings exactos del evento (`"{nombre} - {servicio}"`, `"Tel: {tel}"`),
+  leídos del llamador en `ReservaService.cs:169`;
+- el `timeZone: "America/Argentina/Buenos_Aires"` en `start` y `end`;
+- el comportamiento ante error: cada método atrapa y devuelve `null`/`false`/`[]`,
+  nunca propaga.
+
+Lo único sin referencia previa es la firma del JWT: en .NET la hace el SDK de
+Google, así que el `crypto.subtle` de Workers se escribió de cero. Está probado
+firmando y **verificando con la clave pública**, no mirando que el string tenga
+tres partes.
+
+### Un bug del helper .NET que acá no está
+
+`SlotHelper.BuildEventTimes` arma la hora de fin como `totalEnd / 60`, sin
+normalizar el pasaje de medianoche: un turno de 23:30 + 30 min produce
+`"24:00:00-03:00"`, que no es una hora ISO válida. Nuestro `buildEventTimes` de
+la Fase 1 ya rota al día siguiente y tiene tests de eso
+(`2027-04-01T23:30 + 30 → 2027-04-02T00:00:00-03:00`). No hay nada que
+arreglar, queda anotado para que no se "corrija" hacia el comportamiento viejo.

@@ -6,6 +6,11 @@ import { buscarReserva, buscarServicio } from './agenda';
 import { evaluarSlot, mensajeCliente, combinarOverrides } from '../domain/schedule';
 import { esFechaValida, esHoraValida, diaDeLaSemana, todayArgentina } from '../domain/dates';
 import { MENSAJE_OVERLAP } from '../do/BarberoAgenda';
+import {
+  sincronizarCancelacion,
+  sincronizarReprogramacion,
+  sinRomper,
+} from './calendario-reservas';
 import type { Rol } from './auth';
 
 /**
@@ -61,6 +66,18 @@ export async function cancelarReserva(
     .update(reservas)
     .set({ estado: 'cancelada', canceladaAt: ahora.toISOString() })
     .where(eq(reservas.id, id));
+
+  // Best-effort y DESPUES del commit: el turno ya esta cancelado en la base,
+  // que es lo que le importa a la disponibilidad. Un evento que sobreviva en
+  // el calendario es molesto; un 500 acá haria creer que no se cancelo.
+  //
+  // ⚠️ `sinRomper` es una SEGUNDA capa, y sacarlo hoy no rompe ningun test —
+  // verificado por mutacion. No es un test faltante: `sincronizarCancelacion`
+  // ya atrapa todo lo suyo, asi que el mutante es equivalente. Se deja igual
+  // porque la garantia "nunca tires una reserva por una integracion caida" no
+  // puede depender de que cada pieza futura se acuerde de atrapar lo suyo, y
+  // este llamador ya devolvio exito. `sinRomper` se prueba donde vive.
+  await sinRomper('cancelacion', id, () => sincronizarCancelacion(env, id));
 
   return { estado: 'exito' };
 }
@@ -185,6 +202,7 @@ export async function reprogramarReserva(
 
   switch (r.estado) {
     case 'exito':
+      await sinRomper('reprogramacion', id, () => sincronizarReprogramacion(env, id));
       return { estado: 'exito' };
     case 'overlap':
       return { estado: 'overlap', error: MENSAJE_OVERLAP };

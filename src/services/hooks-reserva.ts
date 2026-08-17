@@ -1,3 +1,5 @@
+import { sincronizarAlta } from './calendario-reservas';
+
 /**
  * Hooks post-commit de una reserva. BEST-EFFORT.
  *
@@ -5,8 +7,8 @@
  * Calendar o WhatsApp fallan, se loguea y se sigue: nunca se tira una reserva
  * por una integracion caida (regla de oro 3).
  *
- * Implementaciones reales: Fase 4. Acá quedan los seams y el manejo de error,
- * que es la parte que no puede estar mal.
+ * Google Calendar: implementado en la tarea 4.1.
+ * WhatsApp: pendiente de la tarea 4.2.
  */
 
 export interface DatosReservaCreada {
@@ -51,8 +53,11 @@ async function aPruebaDeFallos(
 export const hooksPorDefecto: HooksReserva = {
   async ejecutar(env, datos) {
     await aPruebaDeFallos('google-calendar', datos, async () => {
+      // El chequeo de `calendarId` tambien esta adentro de `sincronizarAlta`;
+      // acá evita el viaje a la base cuando ya sabemos que no hay nada que
+      // hacer, que es el caso de todo barbero sin calendario propio.
       if (!datos.calendarId) return;
-      // Fase 4, tarea 4.1.
+      await sincronizarAlta(env, datos.reservaId);
     });
 
     await aPruebaDeFallos('whatsapp', datos, async () => {
