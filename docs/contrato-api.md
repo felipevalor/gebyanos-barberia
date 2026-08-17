@@ -3,11 +3,11 @@
 **Generado leyendo el código real** (tareas 2.1 a 2.4), no la spec. Si algo acá
 no coincide con el comportamiento, es un bug de este documento.
 
-Estado: **endpoints públicos completos.** El panel de administración
-(`/api/admin/*`) y la autogestión del cliente (`/api/mi-turno/*`) todavía no
-existen — están montados pero vacíos.
+Estado: **Fase 2 completa** — endpoints públicos, autenticación y panel de
+agenda y reservas. La configuración (Fase 3) y la autogestión del cliente
+(`/api/mi-turno/*`, Fase 5) todavía no existen.
 
-Última actualización: 2026-08-17 · commit `df3047d`
+Última actualización: 2026-08-17 · Fase 2 cerrada
 
 ---
 
@@ -57,8 +57,7 @@ No hay respuestas sin sobre. No hay campos extra en el nivel superior.
 tres estados de error de la reserva (`datosInvalidos`, `noDisponible`,
 `overlap`) colapsan en 400 y se distinguen **solo por el texto de `error`**.
 
-Los códigos `401` y `403` los emite el panel (`/api/admin/*`). El `409` está
-definido en las convenciones pero ningún endpoint lo emite hoy.
+El `409` está definido en las convenciones pero ningún endpoint lo emite hoy.
 
 ### Caché
 
@@ -557,6 +556,15 @@ carácter por carácter.
 | `Año inválido.` | 400 | `/disponibilidad/mes` |
 | `barberoId es obligatorio.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
 | `Barbero inválido.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
+| `Formato de fecha inválido en desde.` | 400 | `GET /api/admin/agenda` |
+| `limit inválido.` / `skip inválido.` | 400 | `GET /api/admin/reservas` |
+| `No autorizado` | 401 | todo `/api/admin/*` autenticado |
+| `No se pueden importar más de 500 filas por vez.` | 400 | `POST /api/admin/reservas/importar` |
+| `Prohibido` | 403 | import sin ser owner; tocar la reserva de otro |
+| `Reserva no encontrada.` | 404 | `PUT` / `DELETE` de reservas |
+| `Se esperaba una lista de reservas.` | 400 | `POST /api/admin/reservas/importar` |
+| `Usuario o contraseña incorrectos` | 401 | `POST /api/admin/auth` |
+| `Ya existe una reserva en ese horario.` | 400 | `POST /api/admin/bloqueos` |
 | `Demasiados intentos. Intentá más tarde.` | 429 | `POST /reservas`, `POST /api/admin/auth` |
 | `clienteNombre es obligatorio.` | 400 | `POST /reservas` |
 | `clienteTelefono es obligatorio.` | 400 | `POST /reservas` |
@@ -615,10 +623,236 @@ No inventes contratos para esto — se documenta cuando esté construido.
 
 | Qué | Ruta | Tarea |
 |---|---|---|
-| Login del panel | `POST /api/admin/auth` | 2.5 |
-| Agenda y reservas del panel | `/api/admin/*` | 2.7 |
 | Configuración (horarios, feriados, catálogos) | `/api/admin/*` | Fase 3 |
 | Consulta y cancelación con magic link | `/api/mi-turno/*` | Fase 5 |
 
-`/api/admin` y `/api/mi-turno` están montados pero sin rutas: cualquier request
-devuelve **404** con `{ "ok": false, "error": "No encontrado." }`.
+`/api/mi-turno` está montado pero sin rutas: cualquier request devuelve **404**
+con `{ "ok": false, "error": "No encontrado." }`.
+
+---
+
+# Panel de administración
+
+Todo bajo `/api/admin/*`. **Nada se cachea**: `Cache-Control: no-store` en
+todas las respuestas, incluidas las de error.
+
+## Autenticación
+
+La sesión viaja en una cookie `admin_token`, `HttpOnly` + `Secure` +
+`SameSite=Lax` + `Path=/`, con 24 h de vida.
+
+⚠️ **El header `Authorization: Bearer` no se acepta.** Es deliberado: la cookie
+es `HttpOnly` para que un script inyectado no pueda leerla, y el backend
+tampoco acepta la otra vía. Un token válido enviado como header da **401**.
+
+El frontend no necesita hacer nada con el token — el navegador manda la cookie
+solo. **No intentes leerla desde JS: no vas a poder.** Usá `credentials:
+'include'` si el frontend está en otro origen.
+
+| Código | Cuándo |
+|---|---|
+| `401 No autorizado` | sin cookie, cookie inválida, o sesión vencida |
+| `403 Prohibido` | autenticado pero sin permiso para eso |
+
+### `POST /api/admin/auth`
+
+Body `{ usuario, password }`. El usuario es el `slug` del barbero.
+
+**200:** `{ ok: true, data: { user: { id, slug, nombre, rol } } }` — `rol` es
+`"barbero"` o `"owner"`.
+
+**El token NUNCA está en el body.**
+
+| Error | Código |
+|---|---|
+| `Usuario o contraseña incorrectos` | 401 |
+| `Demasiados intentos. Intentá más tarde.` | 429 |
+
+Un usuario inexistente y una contraseña incorrecta devuelven **exactamente la
+misma respuesta** — no se puede averiguar si un usuario existe.
+
+**El rate limit solo cuenta los intentos fallidos:** 10 fallos por IP cada 15
+min. Entrar bien no gasta cupo.
+
+### `DELETE /api/admin/auth`
+
+Cierra sesión. Borra la fila de la base, no solo la cookie. Responde `200`
+siempre, incluso sin cookie o con la sesión ya vencida.
+
+### `GET /api/admin/me`
+
+**200:** `{ ok: true, data: { id, slug, nombre, rol } }`
+
+---
+
+## El scoping por rol
+
+**Es la regla que gobierna todo el panel.**
+
+| Rol | Qué ve y qué toca |
+|---|---|
+| `barbero` | **solo lo suyo**, siempre |
+| `owner` | todo; con `?barberoId=` filtra por ese |
+
+⚠️ **Un `barbero` que manda `?barberoId=` de otro no recibe un error: recibe
+sus propios datos.** El parámetro se ignora. No lo uses para "cambiar de
+barbero" en la UI sin chequear el rol primero, porque no vas a distinguir el
+filtro aplicado del ignorado.
+
+Sobre una reserva puntual (editar, cancelar) sí hay error: **403 Prohibido**.
+
+---
+
+## `GET /api/admin/agenda`
+
+Turnos **y bloqueos** en un rango. Es la vista de calendario del barbero.
+
+| Param | Requerido | Default |
+|---|---|---|
+| `desde` | no | hoy − 30 días |
+| `hasta` | no | hoy + 60 días |
+| `barberoId` | no | según rol (ver scoping) |
+
+**200:** lista de turnos, ordenada por fecha y hora, máximo 500.
+
+```json
+{ "ok": true, "data": [{
+  "id": "0193...", "barberoId": "0193...", "barberoNombre": "Ana",
+  "fecha": "2026-08-24", "hora": "10:00", "duracionMin": 30,
+  "nombre": "Juan Pérez", "telefono": "3416513207", "servicio": "Corte",
+  "estado": "activa", "tipo": "turno", "mensaje": null,
+  "source": "web", "createdAt": "2026-08-17T14:30:00.000Z"
+}] }
+```
+
+**Incluye los bloqueos** (`tipo: "bloqueo"`), porque ocupan lugar en la agenda.
+Un bloqueo trae `nombre` y `telefono` vacíos.
+
+Solo devuelve `estado: "activa"`. Los turnos cancelados no aparecen.
+
+| Error | Código |
+|---|---|
+| `Formato de fecha inválido en desde.` / `en hasta.` | 400 |
+
+## `GET /api/admin/reservas`
+
+Listado paginado de **turnos de clientes**. A diferencia de la agenda,
+**excluye los bloqueos** e incluye los cancelados.
+
+| Param | Default | Máximo |
+|---|---|---|
+| `skip` | 0 | — |
+| `limit` | 50 | 200 |
+| `barberoId` | según rol | — |
+
+**200:** `{ ok: true, data: { items: [...], total, skip, limit } }`
+
+`total` es el total **sin paginar**: sirve para el paginador.
+
+Ordenado por fecha y hora **descendente** — lo más reciente primero.
+
+| Error | Código |
+|---|---|
+| `skip inválido.` / `limit inválido.` | 400 |
+
+## `POST /api/admin/reservas`
+
+Alta desde el panel. Mismo body que `POST /api/reservas`, **sin `barberoId`**
+(sale del scoping; un `owner` puede mandarlo para cargar en otra agenda).
+
+**Diferencias con la reserva pública:**
+
+| | Pública | Panel |
+|---|---|---|
+| Anticipación mínima (30 min) | sí | **no** |
+| Anticipación máxima (14 días) | sí | **no** |
+| Horario de atención | sí | sí |
+| Fecha pasada | rechaza | rechaza |
+| Solapamiento | sí | **sí** |
+| `source` | `web` | `admin` |
+
+**200:** `{ ok: true, data: { cancelToken, mensaje } }`
+
+## `PUT /api/admin/reservas/:id`
+
+Reprograma. Body `{ fecha, hora, servicioId? }`.
+
+⚠️ **La reserva cambia de `id` y de `cancelToken`.** Internamente se cancela la
+original y se crea una nueva, para que el nuevo horario pase por el mismo
+control de concurrencia que cualquier reserva. Si guardás el `id` en el
+frontend, recargá después de reprogramar.
+
+Si el destino está ocupado, **la original queda intacta** y se devuelve 400.
+
+| Error | Código |
+|---|---|
+| `Formato de fecha inválido.` | 400 |
+| `Lo sentimos, este turno acaba de ser reservado por alguien más.` | 400 |
+| `Prohibido` | 403 |
+| `Reserva no encontrada.` | 404 |
+
+## `DELETE /api/admin/reservas/:id`
+
+Cancela. **Soft delete**: la fila queda con `estado: "cancelada"` y
+`cancelada_at`. Nunca se borra.
+
+El slot **vuelve a estar disponible** inmediatamente.
+
+**200:** `{ ok: true, data: null }`
+
+| Error | Código |
+|---|---|
+| `Prohibido` | 403 |
+| `Reserva no encontrada.` | 404 |
+
+## `POST /api/admin/reservas/importar`
+
+**Solo `owner`.** Un `barbero` recibe 403.
+
+Body: `{ filas: [...] }` o directamente un array. Cada fila tiene la forma de
+`POST /api/reservas`. **Máximo 500 por request.**
+
+Las filas del import **saltean** la fecha pasada y el horario de atención — son
+datos históricos, y el horario de hace un año no es el de hoy. **El
+solapamiento se valida igual.**
+
+**No dispara Google Calendar ni WhatsApp.**
+
+**200:**
+
+```json
+{ "ok": true, "data": {
+  "importadas": 3, "salteadas": 2,
+  "errores": [
+    { "fila": 3, "motivo": "Lo sentimos, este turno acaba de ser reservado por alguien más." },
+    { "fila": 5, "motivo": "Revisá el teléfono. Tiene que ser un número argentino válido con código de área." }
+  ]
+} }
+```
+
+**Una fila que falla no aborta el lote.** `fila` es 1-based sobre el array que
+mandaste, para poder ubicarla en el archivo original.
+
+| Error | Código |
+|---|---|
+| `Prohibido` | 403 |
+| `No se pueden importar más de 500 filas por vez.` | 400 |
+| `Se esperaba una lista de reservas.` | 400 |
+
+## `POST /api/admin/bloqueos`
+
+Bloquea un slot sin que sea el turno de nadie: un turno médico, un almuerzo.
+
+Body `{ fecha, hora, motivo?, duracionMin?, barberoId? }`. `duracionMin`
+default 30.
+
+Crea una fila en `reservas` con `tipo: "bloqueo"`. **Ocupa el slot igual que un
+turno** en `/api/disponibilidad`, y **no aparece** en
+`GET /api/admin/reservas`.
+
+**200:** `{ ok: true, data: null }`
+
+| Error | Código |
+|---|---|
+| `Ya existe una reserva en ese horario.` | 400 |
+| `Formato de fecha inválido.` / `Formato de hora inválido. Usá HH:mm.` | 400 |

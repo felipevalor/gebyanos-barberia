@@ -494,3 +494,97 @@ describe('hooks post-commit, best-effort', () => {
     });
   });
 });
+
+// ================================================ modos: publico, admin, import
+
+describe('modo admin: sin anticipacion minima ni maxima', () => {
+  const desdeElPanel = (over: Partial<EntradaReserva> = {}, ahora = AHORA) =>
+    crearReserva(env, entrada(over), { ahora, hooks: hooksMudos, modo: 'admin' });
+
+  it('acepta un turno para dentro de 10 minutos; el publico lo rechaza', async () => {
+    // Son las 09:50. El turno es a las 10:00: faltan 10 min, y el minimo es 30.
+    const ahora = new Date(slotAMs(HOY, '09:50'));
+    const args = { fecha: HOY, hora: '10:00' };
+
+    expect(errorDe(await reservar(args, ahora))).toBe(
+      'Debés reservar con al menos 30 minutos de anticipación.',
+    );
+    expect((await desdeElPanel(args, ahora)).estado).toBe('exito');
+  });
+
+  it('acepta un turno a 90 dias; el publico lo rechaza', async () => {
+    const args = { fecha: '2027-06-08' };
+
+    expect(errorDe(await reservar(args))).toBe(
+      'Solo se puede reservar con hasta 14 días de anticipación.',
+    );
+    expect((await desdeElPanel(args)).estado).toBe('exito');
+  });
+
+  it('SIGUE aplicando el horario de atencion', async () => {
+    // Lo que se saltea es la anticipacion, no la disponibilidad.
+    expect(errorDe(await desdeElPanel({ hora: '14:00' }))).toBe(
+      'El horario elegido está fuera del horario de atención.',
+    );
+  });
+
+  it('SIGUE rechazando el pasado', async () => {
+    expect(errorDe(await desdeElPanel({ fecha: '2027-03-09' }))).toBe(
+      'No se puede agendar un turno en el pasado.',
+    );
+  });
+
+  it('guarda source = admin', async () => {
+    await desdeElPanel({ hora: '11:00' });
+    const f = await env.DB.prepare('SELECT source FROM reservas').first<{ source: string }>();
+    expect(f?.source).toBe('admin');
+  });
+});
+
+describe('modo import: ademas sin fecha pasada ni horario', () => {
+  const importar = (over: Partial<EntradaReserva> = {}) =>
+    crearReserva(env, entrada(over), { ahora: AHORA, hooks: hooksMudos, modo: 'import' });
+
+  it('acepta fechas pasadas', async () => {
+    expect((await importar({ fecha: '2020-06-15' })).estado).toBe('exito');
+  });
+
+  it('acepta horarios fuera del horario de atencion', async () => {
+    expect((await importar({ fecha: '2020-06-15', hora: '23:30' })).estado).toBe('exito');
+  });
+
+  it('el modo admin NO acepta esas dos cosas: los modos son distintos', async () => {
+    const admin = (over: Partial<EntradaReserva>) =>
+      crearReserva(env, entrada(over), { ahora: AHORA, hooks: hooksMudos, modo: 'admin' });
+
+    expect((await admin({ fecha: '2020-06-15' })).estado).toBe('datosInvalidos');
+    expect((await admin({ hora: '23:30' })).estado).toBe('noDisponible');
+  });
+
+  it('SIGUE validando el solapamiento', async () => {
+    expect((await importar({ hora: '12:00' })).estado).toBe('exito');
+    expect((await importar({ hora: '12:00' })).estado).toBe('overlap');
+  });
+
+  it('SIGUE validando el telefono', async () => {
+    expect((await importar({ clienteTelefono: '+1 212 555 1234' })).estado).toBe('datosInvalidos');
+  });
+
+  it('NO ejecuta los hooks post-commit', async () => {
+    let llamado = false;
+    const espia: HooksReserva = { async ejecutar() { llamado = true; } };
+
+    await crearReserva(env, entrada({ hora: '11:30' }), { ahora: AHORA, hooks: espia, modo: 'import' });
+    expect(llamado).toBe(false);
+
+    // Control: en modo publico si se ejecutan.
+    await crearReserva(env, entrada({ hora: '12:30' }), { ahora: AHORA, hooks: espia });
+    expect(llamado).toBe(true);
+  });
+
+  it('guarda source = import', async () => {
+    await importar({ hora: '09:30' });
+    const f = await env.DB.prepare('SELECT source FROM reservas').first<{ source: string }>();
+    expect(f?.source).toBe('import');
+  });
+});

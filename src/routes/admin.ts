@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import { ok, fail } from '../api';
 import { sinCache } from '../middleware/cache';
-import { requiereAuth, type VariablesAuth } from '../middleware/auth';
+import { requiereAuth, requiereOwner, type VariablesAuth } from '../middleware/auth';
 import { limitarFallosPorIp, type VariablesRateLimit } from '../middleware/rate-limit';
 import {
   login,
@@ -12,7 +12,22 @@ import {
   DURACION_SESION_MS,
   ERROR_CREDENCIALES,
   ERROR_NO_AUTORIZADO,
+  ERROR_PROHIBIDO,
+  type SesionActiva,
 } from '../services/auth';
+import { resolverBarbero, listarAgenda, listarReservas } from '../services/agenda';
+import {
+  cancelarReserva,
+  reprogramarReserva,
+  crearBloqueo,
+  importarReservas,
+  MAX_FILAS_IMPORT,
+  ERROR_SLOT_OCUPADO,
+  ERROR_RESERVA_NO_ENCONTRADA,
+  ERROR_LOTE_DEMASIADO_GRANDE,
+} from '../services/reservas-admin';
+import { crearReserva, type EntradaReserva } from '../services/reserva';
+import { esFechaValida, esHoraValida } from '../domain/dates';
 
 /**
  * Panel de administracion. Roles `barbero` y `owner`.
@@ -104,6 +119,167 @@ adminRoutes.get('/me', requiereAuth, async (c) => {
   if (!usuario) return c.json(fail(ERROR_NO_AUTORIZADO), 401);
 
   return c.json(ok(usuario), 200);
+});
+
+// ================================================================ AGENDA
+
+/**
+ * ⚠️ EL SCOPING SE RESUELVE UNA SOLA VEZ, ACA.
+ *
+ * Ningun handler lee `barberoId` de la query por su cuenta: `resolverBarbero`
+ * devuelve el barbero objetivo ya decidido, y para un `barbero` ese valor es
+ * SIEMPRE el suyo, mande lo que mande en la query.
+ */
+const objetivo = (c: { get: (k: 'sesion') => SesionActiva; req: { query: (k: string) => string | undefined } }) =>
+  resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+
+adminRoutes.get('/agenda', requiereAuth, async (c) => {
+  const desde = c.req.query('desde');
+  const hasta = c.req.query('hasta');
+
+  for (const [nombre, valor] of [['desde', desde], ['hasta', hasta]] as const) {
+    if (valor && !esFechaValida(valor)) {
+      return c.json(fail(`Formato de fecha inválido en ${nombre}.`), 400);
+    }
+  }
+
+  return c.json(
+    ok(await listarAgenda(c.env, { barberoId: objetivo(c), desde, hasta })),
+    200,
+  );
+});
+
+adminRoutes.get('/reservas', requiereAuth, async (c) => {
+  const numero = (v: string | undefined) => (v === undefined ? undefined : Number(v));
+  const skip = numero(c.req.query('skip'));
+  const limit = numero(c.req.query('limit'));
+
+  if (skip !== undefined && (!Number.isFinite(skip) || skip < 0)) {
+    return c.json(fail('skip inválido.'), 400);
+  }
+  if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+    return c.json(fail('limit inválido.'), 400);
+  }
+
+  return c.json(ok(await listarReservas(c.env, { barberoId: objetivo(c), skip, limit })), 200);
+});
+
+// ============================================================== ESCRITURAS
+
+/**
+ * Alta desde el panel. `source = 'admin'` y SIN anticipacion minima ni maxima:
+ * el barbero carga un turno para dentro de 5 minutos todo el tiempo.
+ *
+ * El solapamiento si se valida — sale del Durable Object y no se saltea nunca.
+ */
+adminRoutes.post('/reservas', requiereAuth, async (c) => {
+  const cuerpo = await c.req.json().catch(() => null);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const sesion = c.get('sesion');
+  // Un barbero solo puede cargar turnos en SU agenda.
+  const barberoId =
+    sesion.rol === 'owner'
+      ? ((cuerpo as { barberoId?: string }).barberoId ?? sesion.barberoId)
+      : sesion.barberoId;
+
+  const resultado = await crearReserva(c.env, cuerpo as EntradaReserva, {
+    modo: 'admin',
+    barberoIdForzado: barberoId,
+  });
+
+  if (resultado.estado === 'exito') {
+    return c.json(ok({ cancelToken: resultado.cancelToken, mensaje: resultado.mensaje }), 200);
+  }
+  return c.json(fail(resultado.error), 400);
+});
+
+adminRoutes.put('/reservas/:id', requiereAuth, async (c) => {
+  const cuerpo = await c.req.json().catch(() => null);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const { fecha, hora, servicioId } = cuerpo as {
+    fecha?: string;
+    hora?: string;
+    servicioId?: string;
+  };
+  if (!fecha || !esFechaValida(fecha)) return c.json(fail('Formato de fecha inválido.'), 400);
+  if (!hora) return c.json(fail('Formato de hora inválido. Usá HH:mm.'), 400);
+
+  const r = await reprogramarReserva(c.env, c.get('sesion'), c.req.param('id'), {
+    fecha,
+    hora,
+    ...(servicioId ? { servicioId } : {}),
+  });
+
+  switch (r.estado) {
+    case 'exito':
+      return c.json(ok(null), 200);
+    case 'noEncontrada':
+      return c.json(fail(ERROR_RESERVA_NO_ENCONTRADA), 404);
+    case 'prohibido':
+      return c.json(fail(ERROR_PROHIBIDO), 403);
+    default:
+      return c.json(fail(r.error), 400);
+  }
+});
+
+adminRoutes.delete('/reservas/:id', requiereAuth, async (c) => {
+  const r = await cancelarReserva(c.env, c.get('sesion'), c.req.param('id'));
+
+  if (r.estado === 'noEncontrada') return c.json(fail(ERROR_RESERVA_NO_ENCONTRADA), 404);
+  if (r.estado === 'prohibido') return c.json(fail(ERROR_PROHIBIDO), 403);
+  return c.json(ok(null), 200);
+});
+
+/** Import masivo. `requiereOwner` va DESPUES de `requiereAuth`. */
+adminRoutes.post('/reservas/importar', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await c.req.json().catch(() => null);
+  const filas = Array.isArray(cuerpo)
+    ? cuerpo
+    : (cuerpo as { filas?: unknown[] } | null)?.filas;
+
+  if (!Array.isArray(filas)) return c.json(fail('Se esperaba una lista de reservas.'), 400);
+  if (filas.length > MAX_FILAS_IMPORT) return c.json(fail(ERROR_LOTE_DEMASIADO_GRANDE), 400);
+
+  return c.json(ok(await importarReservas(c.env, filas)), 200);
+});
+
+adminRoutes.post('/bloqueos', requiereAuth, async (c) => {
+  const cuerpo = await c.req.json().catch(() => null);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const { fecha, hora, motivo, duracionMin } = cuerpo as {
+    fecha?: string;
+    hora?: string;
+    motivo?: string;
+    duracionMin?: number;
+  };
+  if (!fecha || !esFechaValida(fecha)) return c.json(fail('Formato de fecha inválido.'), 400);
+  if (!hora || !esHoraValida(hora)) return c.json(fail('Formato de hora inválido. Usá HH:mm.'), 400);
+
+  const sesion = c.get('sesion');
+  const barberoId =
+    sesion.rol === 'owner'
+      ? ((cuerpo as { barberoId?: string }).barberoId ?? sesion.barberoId)
+      : sesion.barberoId;
+
+  const r = await crearBloqueo(c.env, barberoId, {
+    fecha,
+    hora,
+    ...(motivo ? { motivo } : {}),
+    ...(typeof duracionMin === 'number' ? { duracionMin } : {}),
+  });
+
+  if (r.estado === 'ocupado') return c.json(fail(ERROR_SLOT_OCUPADO), 400);
+  if (r.estado === 'error') throw new Error(r.detalle);
+  return c.json(ok(null), 200);
 });
 
 export { DURACION_SESION_MS };

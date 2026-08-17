@@ -43,6 +43,26 @@ export interface EntradaReserva {
   mensaje?: unknown;
 }
 
+/**
+ * De donde viene la reserva. Cambia QUE validaciones corren.
+ *
+ *   publico → las once. El cliente no puede saltearse nada.
+ *   admin   → sin anticipacion minima ni maxima: el barbero puede cargar un
+ *             turno para dentro de 5 minutos o para dentro de 3 meses.
+ *   import  → ademas sin fecha pasada ni horario de atencion: son datos
+ *             historicos, y el horario de hace un anio no es el de hoy.
+ *
+ * Lo que NUNCA se saltea es el solapamiento: sale del Durable Object y vale
+ * para los tres modos.
+ */
+export type ModoReserva = 'publico' | 'admin' | 'import';
+
+const SOURCE_POR_MODO: Record<ModoReserva, string> = {
+  publico: 'web',
+  admin: 'admin',
+  import: 'import',
+};
+
 export type ResultadoReserva =
   | { estado: 'exito'; cancelToken: string; mensaje: string }
   | { estado: 'datosInvalidos'; error: string }
@@ -125,6 +145,9 @@ export interface OpcionesReserva {
   ahora?: Date;
   /** Inyectables para poder testear que un hook roto no tumba la reserva. */
   hooks?: HooksReserva;
+  modo?: ModoReserva;
+  /** Fuerza el barbero, ignorando el del body. Lo usa el panel con el scoping. */
+  barberoIdForzado?: string;
 }
 
 export async function crearReserva(
@@ -134,8 +157,13 @@ export async function crearReserva(
 ): Promise<ResultadoReserva> {
   const ahora = opciones.ahora ?? new Date();
   const hooks = opciones.hooks ?? hooksPorDefecto;
+  const modo = opciones.modo ?? 'publico';
+  const esPublico = modo === 'publico';
+  const esImport = modo === 'import';
 
-  const forma = validarForma(entrada);
+  const forma = validarForma(
+    opciones.barberoIdForzado ? { ...entrada, barberoId: opciones.barberoIdForzado } : entrada,
+  );
   if (!forma.ok) return invalido(forma.error);
   const datos = forma.datos;
 
@@ -163,11 +191,13 @@ export async function crearReserva(
   // 1. Fecha parseable.
   if (!esFechaValida(datos.fecha)) return invalido('Formato de fecha inválido.');
 
-  // 2. No en el pasado.
-  if (datos.fecha < hoy) return invalido('No se puede agendar un turno en el pasado.');
+  // 2. No en el pasado. El import carga historico, asi que no aplica.
+  if (!esImport && datos.fecha < hoy) {
+    return invalido('No se puede agendar un turno en el pasado.');
+  }
 
-  // 3. Dentro de la ventana de anticipacion maxima.
-  if (datos.fecha > addDays(hoy, diasMaxAnticipacion)) {
+  // 3. Dentro de la ventana de anticipacion maxima. Solo para el publico.
+  if (esPublico && datos.fecha > addDays(hoy, diasMaxAnticipacion)) {
     return invalido(
       `Solo se puede reservar con hasta ${diasMaxAnticipacion} días de anticipación.`,
     );
@@ -175,7 +205,7 @@ export async function crearReserva(
 
   // 4. Si es hoy, la hora no puede haber pasado. Es distinto del paso 9: acá
   //    se rechaza el pasado, allá el margen minimo.
-  if (datos.fecha === hoy && datos.hora < timeNowArgentina(ahora)) {
+  if (!esImport && datos.fecha === hoy && datos.hora < timeNowArgentina(ahora)) {
     return invalido('No se puede agendar un turno en un horario que ya pasó.');
   }
 
@@ -252,13 +282,18 @@ export async function crearReserva(
   // 8. La regla de oro: el backend valida disponibilidad aunque el frontend ya
   //    haya ocultado el slot. Con la duracion del SERVICIO, no la global.
   const overrideTrabaja = combinarOverrides(overrides.map((o) => ({ trabaja: o.trabaja === 1 })));
-  const estado = evaluarSlot(bloques, overrideTrabaja, datos.hora, duracionMin);
-  if (estado !== 'abierto') {
-    return { estado: 'noDisponible', error: mensajeCliente(estado) };
+  //     El import no lo aplica: el horario de atencion de hace un anio no es
+  //     el de hoy, y rechazar historico por eso seria absurdo.
+  if (!esImport) {
+    const estado = evaluarSlot(bloques, overrideTrabaja, datos.hora, duracionMin);
+    if (estado !== 'abierto') {
+      return { estado: 'noDisponible', error: mensajeCliente(estado) };
+    }
   }
 
-  // 9. Anticipacion minima.
-  if (!cumpleAnticipacion(slotAMs(datos.fecha, datos.hora), ahora.getTime(), minutosAnticipacion)) {
+  // 9. Anticipacion minima. Solo para el publico: el panel carga turnos para
+  //    dentro de 5 minutos todo el tiempo.
+  if (esPublico && !cumpleAnticipacion(slotAMs(datos.fecha, datos.hora), ahora.getTime(), minutosAnticipacion)) {
     return invalido(`Debés reservar con al menos ${minutosAnticipacion} minutos de anticipación.`);
   }
 
@@ -288,7 +323,7 @@ export async function crearReserva(
     servicio: servicioNombre,
     servicioId: servicio ? datos.servicioId : null,
     mensaje: datos.mensaje || `${servicioNombre} el ${datos.fecha} a las ${datos.hora}`,
-    source: 'web',
+    source: SOURCE_POR_MODO[modo],
     tipo: 'turno',
     upsertCliente: { nombre: datos.clienteNombre, telefono },
   });
@@ -306,6 +341,12 @@ export async function crearReserva(
   // El try/catch va ACA, en el llamador, y no solo adentro de los hooks: la
   // garantia no puede depender de que cada implementacion de hook se acuerde
   // de atrapar sus propios errores.
+  // El import NO dispara Calendar ni WhatsApp: son datos historicos o cargas
+  // masivas, y notificar 500 turnos por WhatsApp seria un desastre.
+  if (esImport) {
+    return { estado: 'exito', cancelToken: resultado.cancelToken, mensaje: MENSAJE_EXITO };
+  }
+
   try {
     await hooks.ejecutar(env, {
       reservaId: resultado.reservaId,
