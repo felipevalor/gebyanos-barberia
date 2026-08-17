@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import { ok, fail } from '../api';
 import { sinCache } from '../middleware/cache';
-import { requiereAuth, type VariablesAuth } from '../middleware/auth';
+import { requiereAuth, requiereOwner, type VariablesAuth } from '../middleware/auth';
 import { limitarFallosPorIp, type VariablesRateLimit } from '../middleware/rate-limit';
 import {
   login,
@@ -68,6 +68,56 @@ import {
   ERROR_SOLO_OWNER_IMPORT_CLIENTES,
   ERROR_LOTE_CLIENTES,
 } from '../services/clientes';
+import {
+  listarBarberos,
+  buscarBarbero,
+  crearBarbero,
+  actualizarBarbero,
+  borrarBarbero,
+  esUltimoOwner,
+  type EntradaBarbero,
+  ERROR_BARBERO_NO_ENCONTRADO,
+  ERROR_SLUG_DUPLICADO,
+  ERROR_ULTIMO_OWNER_DESACTIVAR,
+  ERROR_ULTIMO_OWNER_BORRAR,
+  ERROR_ULTIMO_OWNER_ROL,
+} from '../services/barberos';
+import {
+  listarServicios,
+  buscarServicio,
+  crearServicio,
+  actualizarServicio,
+  borrarServicio,
+  type EntradaServicio,
+  ERROR_SERVICIO_NO_ENCONTRADO,
+  ERROR_SERVICIO_DUPLICADO,
+  AVISO_DURACION_CAMBIADA,
+} from '../services/servicios';
+import {
+  listarPromos,
+  buscarPromo,
+  crearPromo,
+  actualizarPromo,
+  borrarPromo,
+  listarCatalogo,
+  buscarItemCatalogo,
+  crearItemCatalogo,
+  actualizarItemCatalogo,
+  borrarItemCatalogo,
+  type EntradaPromo,
+  type EntradaCatalogo,
+  ERROR_PROMO_NO_ENCONTRADA,
+  ERROR_ITEM_NO_ENCONTRADO,
+} from '../services/vidriera';
+import {
+  leerNegocio,
+  actualizarNegocio,
+  type EntradaNegocio,
+  ERROR_SIN_CONFIGURACION,
+  AVISO_SLOT_CAMBIADO,
+} from '../services/negocio';
+import { calcularStats } from '../services/stats';
+import { chequearDesactivarBarbero, chequearBorrarBarbero } from '../services/conflictos';
 import { todayArgentina } from '../domain/dates';
 
 
@@ -583,6 +633,258 @@ adminRoutes.post('/clientes/importar', requiereAuth, async (c) => {
   if (filas.length > MAX_FILAS_IMPORT_CLIENTES) return c.json(fail(ERROR_LOTE_CLIENTES), 400);
 
   return c.json(ok(await importarClientes(c.env, filas)), 200);
+});
+
+// ========================================== CATALOGOS Y CONFIGURACION (3.4)
+
+/**
+ * De acá para abajo, TODO es de `owner` salvo `GET /negocio` y `GET /stats`.
+ *
+ * 🐛 EL CHEQUEO DEVUELVE 403, NO 401. El sistema viejo usa 401 y esta mal: el
+ * usuario esta autenticado —la sesion es valida— lo que le falta es permiso.
+ * Un 401 le dice al frontend "volvé a loguearte", y volver a loguearse no
+ * cambia nada: el barbero sigue sin ser dueño y el panel lo manda al login en
+ * loop.
+ */
+
+const cuerpoJson = async (c: { req: { json: () => Promise<unknown> } }) =>
+  c.req.json().catch(() => null);
+
+// ---------------------------------------------------------------- barberos
+
+adminRoutes.get('/barberos', requiereAuth, requiereOwner, async (c) =>
+  c.json(ok(await listarBarberos(c.env)), 200),
+);
+
+adminRoutes.post('/barberos', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await crearBarbero(c.env, cuerpo as EntradaBarbero);
+  if (r.estado === 'duplicado') return c.json(fail(ERROR_SLUG_DUPLICADO), 400);
+  if (r.estado === 'error') return c.json(fail(r.error), 400);
+
+  return c.json(ok(r.barbero), 200);
+});
+
+/**
+ * Edicion. Tres cosas pueden dejar el panel sin dueño y las tres se frenan acá:
+ * desactivar al ultimo owner, degradarlo a barbero, y —via Bloquear+Avisar—
+ * desactivar a cualquiera que tenga turnos futuros.
+ */
+adminRoutes.put('/barberos/:id', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const id = c.req.param('id');
+  const actual = await buscarBarbero(c.env, id);
+  if (!actual) return c.json(fail(ERROR_BARBERO_NO_ENCONTRADO), 404);
+
+  const entrada = cuerpo as EntradaBarbero;
+  const desactivando = entrada.activo === false && actual.activo === 1;
+  const degradando = entrada.rol !== undefined && entrada.rol !== 'owner' && actual.rol === 'owner';
+
+  if (desactivando || degradando) {
+    if (await esUltimoOwner(c.env, id)) {
+      return c.json(
+        fail(desactivando ? ERROR_ULTIMO_OWNER_DESACTIVAR : ERROR_ULTIMO_OWNER_ROL),
+        409,
+      );
+    }
+  }
+
+  if (desactivando) {
+    const chequeo = await chequearDesactivarBarbero(c.env, id);
+    if (chequeo.hayConflicto) return c.json(cuerpo409(chequeo), 409);
+  }
+
+  const r = await actualizarBarbero(c.env, id, entrada);
+  if (r.estado === 'duplicado') return c.json(fail(ERROR_SLUG_DUPLICADO), 400);
+  if (r.estado === 'error') return c.json(fail(r.error), 400);
+
+  return c.json(ok(r.barbero), 200);
+});
+
+adminRoutes.delete('/barberos/:id', requiereAuth, requiereOwner, async (c) => {
+  const id = c.req.param('id');
+  const actual = await buscarBarbero(c.env, id);
+  if (!actual) return c.json(fail(ERROR_BARBERO_NO_ENCONTRADO), 404);
+
+  if (await esUltimoOwner(c.env, id)) {
+    return c.json(fail(ERROR_ULTIMO_OWNER_BORRAR), 409);
+  }
+
+  const chequeo = await chequearBorrarBarbero(c.env, id);
+  if (chequeo.hayConflicto) return c.json(cuerpo409(chequeo), 409);
+
+  await borrarBarbero(c.env, id);
+  return c.json(ok(null), 200);
+});
+
+// --------------------------------------------------------------- servicios
+
+adminRoutes.get('/servicios', requiereAuth, requiereOwner, async (c) =>
+  c.json(ok(await listarServicios(c.env)), 200),
+);
+
+adminRoutes.post('/servicios', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await crearServicio(c.env, cuerpo as EntradaServicio);
+  if (r.estado === 'duplicado') return c.json(fail(ERROR_SERVICIO_DUPLICADO), 400);
+  if (r.estado === 'error') return c.json(fail(r.error), 400);
+
+  return c.json(ok(r.servicio), 200);
+});
+
+/**
+ * ⚠️ Si cambia `duracionMin`, la respuesta trae `warning`.
+ *
+ * Cambiar la duracion NO toca los turnos ya agendados: cada reserva guarda su
+ * propia copia. El panel TIENE que mostrar ese warning — sin él, quien alarga
+ * el corte de 30 a 45 minutos se queda esperando que la agenda de mañana se
+ * reacomode sola, y no va a pasar.
+ */
+adminRoutes.put('/servicios/:id', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await actualizarServicio(c.env, c.req.param('id'), cuerpo as EntradaServicio);
+  if (r.estado === 'duplicado') return c.json(fail(ERROR_SERVICIO_DUPLICADO), 400);
+  if (r.estado === 'error') {
+    const status = r.error === ERROR_SERVICIO_NO_ENCONTRADO ? 404 : 400;
+    return c.json(fail(r.error), status);
+  }
+
+  return c.json(ok(r.servicio, r.duracionCambiada ? AVISO_DURACION_CAMBIADA : undefined), 200);
+});
+
+adminRoutes.delete('/servicios/:id', requiereAuth, requiereOwner, async (c) => {
+  const id = c.req.param('id');
+  if (!(await buscarServicio(c.env, id))) {
+    return c.json(fail(ERROR_SERVICIO_NO_ENCONTRADO), 404);
+  }
+
+  await borrarServicio(c.env, id);
+  return c.json(ok(null), 200);
+});
+
+// ------------------------------------------------------------------ promos
+
+adminRoutes.get('/promos', requiereAuth, requiereOwner, async (c) =>
+  c.json(ok(await listarPromos(c.env)), 200),
+);
+
+adminRoutes.post('/promos', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await crearPromo(c.env, cuerpo as EntradaPromo);
+  return r.estado === 'exito' ? c.json(ok(r.item), 200) : c.json(fail(r.error), 400);
+});
+
+adminRoutes.put('/promos/:id', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const id = c.req.param('id');
+  if (!(await buscarPromo(c.env, id))) return c.json(fail(ERROR_PROMO_NO_ENCONTRADA), 404);
+
+  const r = await actualizarPromo(c.env, id, cuerpo as EntradaPromo);
+  return r.estado === 'exito' ? c.json(ok(r.item), 200) : c.json(fail(r.error), 400);
+});
+
+adminRoutes.delete('/promos/:id', requiereAuth, requiereOwner, async (c) => {
+  const id = c.req.param('id');
+  if (!(await buscarPromo(c.env, id))) return c.json(fail(ERROR_PROMO_NO_ENCONTRADA), 404);
+
+  await borrarPromo(c.env, id);
+  return c.json(ok(null), 200);
+});
+
+// ---------------------------------------------------------------- catalogo
+
+adminRoutes.get('/catalogo', requiereAuth, requiereOwner, async (c) =>
+  c.json(ok(await listarCatalogo(c.env)), 200),
+);
+
+adminRoutes.post('/catalogo', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await crearItemCatalogo(c.env, cuerpo as EntradaCatalogo);
+  return r.estado === 'exito' ? c.json(ok(r.item), 200) : c.json(fail(r.error), 400);
+});
+
+adminRoutes.put('/catalogo/:id', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const id = c.req.param('id');
+  if (!(await buscarItemCatalogo(c.env, id))) return c.json(fail(ERROR_ITEM_NO_ENCONTRADO), 404);
+
+  const r = await actualizarItemCatalogo(c.env, id, cuerpo as EntradaCatalogo);
+  return r.estado === 'exito' ? c.json(ok(r.item), 200) : c.json(fail(r.error), 400);
+});
+
+adminRoutes.delete('/catalogo/:id', requiereAuth, requiereOwner, async (c) => {
+  const id = c.req.param('id');
+  if (!(await buscarItemCatalogo(c.env, id))) return c.json(fail(ERROR_ITEM_NO_ENCONTRADO), 404);
+
+  await borrarItemCatalogo(c.env, id);
+  return c.json(ok(null), 200);
+});
+
+// ----------------------------------------------------------------- negocio
+
+/** Leerla la necesita CUALQUIER usuario: el panel arranca con esta config. */
+adminRoutes.get('/negocio', requiereAuth, async (c) => {
+  const config = await leerNegocio(c.env);
+  if (!config) return c.json(fail(ERROR_SIN_CONFIGURACION), 404);
+
+  return c.json(ok(config), 200);
+});
+
+adminRoutes.put('/negocio', requiereAuth, requiereOwner, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await actualizarNegocio(c.env, cuerpo as EntradaNegocio);
+  if (r.estado === 'error') {
+    const status = r.error === ERROR_SIN_CONFIGURACION ? 404 : 400;
+    return c.json(fail(r.error), status);
+  }
+
+  return c.json(ok(r.negocio, r.slotCambiado ? AVISO_SLOT_CAMBIADO : undefined), 200);
+});
+
+// ------------------------------------------------------------------- stats
+
+/** Scoped igual que la agenda: un `barbero` cuenta lo suyo y nada mas. */
+adminRoutes.get('/stats', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  return c.json(ok(await calcularStats(c.env, objetivo.barberoId)), 200);
 });
 
 export { DURACION_SESION_MS };

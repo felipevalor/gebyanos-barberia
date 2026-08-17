@@ -3,14 +3,14 @@
 **Generado leyendo el código real**, no la spec. Si algo acá no coincide con el
 comportamiento, es un bug de este documento.
 
-Estado: **Fase 2 completa + tareas 3.1 y 3.2** — endpoints públicos,
-autenticación, panel de agenda y reservas, horarios, feriados y el patrón
-Bloquear+Avisar.
+Estado: **Fase 3 completa** — endpoints públicos, autenticación, panel de
+agenda y reservas, horarios, feriados, Bloquear+Avisar, clientes, catálogos y
+configuración del negocio.
 
-Todavía no existen: clientes (3.3), catálogos y configuración (3.4), y la
-autogestión del cliente (`/api/mi-turno/*`, Fase 5).
+Todavía no existen: integraciones (Fase 4) y la autogestión del cliente
+(`/api/mi-turno/*`, Fase 5).
 
-Última actualización: 2026-08-17 · tareas 3.1 y 3.2
+Última actualización: 2026-08-17 · tareas 3.3 y 3.4
 
 ---
 
@@ -45,6 +45,17 @@ autogestión del cliente (`/api/mi-turno/*`, Fase 5).
 - [`POST /api/admin/feriados`](#post-apiadminferiados)
 - [`DELETE /api/admin/feriados/:id`](#delete-apiadminferiadosid)
 - [`POST /api/admin/bloqueos`](#post-apiadminbloqueos)
+- [`GET /api/admin/clientes`](#get-apiadminclientes)
+- [`GET /api/admin/clientes/exportar`](#get-apiadminclientesexportar)
+- [`GET /api/admin/clientes/:id/historial`](#get-apiadminclientesidhistorial)
+- [`POST /api/admin/clientes`](#post-apiadminclientes)
+- [`POST /api/admin/clientes/importar`](#post-apiadminclientesimportar)
+- [**Solo dueños — el 403 que no es 401**](#solo-dueños--el-403-que-no-es-401)
+- [`/api/admin/barberos`](#apiadminbarberos)
+- [`/api/admin/servicios`](#apiadminservicios)
+- [`/api/admin/promos` y `/api/admin/catalogo`](#apiadminpromos-y-apiadmincatalogo)
+- [`/api/admin/negocio`](#apiadminnegocio)
+- [`GET /api/admin/stats`](#get-apiadminstats)
 
 - [Todos los mensajes de error](#todos-los-mensajes-de-error)
 - [Flujo completo de reserva](#flujo-completo-de-reserva)
@@ -686,9 +697,9 @@ No inventes contratos para esto — se documenta cuando esté construido.
 
 | Qué | Ruta | Tarea |
 |---|---|---|
-| Clientes y export CSV | `/api/admin/clientes*` | 3.3 |
-| Barberos, servicios, promos, catálogo, negocio, stats | `/api/admin/*` | 3.4 |
+| Google Calendar, WhatsApp, recordatorios | — | Fase 4 |
 | Consulta y cancelación con magic link | `/api/mi-turno/*` | Fase 5 |
+| Clientes recurrentes | `/api/admin/recurrentes*` | Fase 5 |
 
 `/api/mi-turno` está montado pero sin rutas: cualquier request devuelve **404**
 con `{ "ok": false, "error": "No encontrado." }`.
@@ -948,12 +959,15 @@ cobertura. En vez de aplicarse y romper la agenda en silencio, devuelven
 | Cambiar el horario de un día | `Hay {n} turno(s) que quedarían fuera del nuevo horario. Reagendalos o cancelalos antes de cambiar el horario.` |
 | Editar un bloque puntual | el mismo |
 | Cerrar una fecha | `Hay {n} turno(s) ese día. Reagendalos o cancelalos antes de marcarlo como cerrado.` |
-| Desactivar un barbero *(3.4)* | `No se puede desactivar: el barbero tiene {n} turno(s) futuro(s). Reagendalos o cancelalos antes de desactivarlo.` |
-| Borrar un barbero *(3.4)* | `No se puede borrar: el barbero tiene {n} turno(s) futuro(s). Reasignalos o cancelalos antes de borrarlo.` + ` Además tiene clientes recurrentes asociados que se perderían.` |
+| Desactivar un barbero | `No se puede desactivar: el barbero tiene {n} turno(s) futuro(s). Reagendalos o cancelalos antes de desactivarlo.` |
+| Borrar un barbero | `No se puede borrar: el barbero tiene {n} turno(s) futuro(s). Reasignalos o cancelalos antes de borrarlo.` + ` Además tiene clientes recurrentes asociados que se perderían.` |
 
 **Qué cuenta como conflicto:** solo turnos de cliente **futuros y activos**. No
 cuentan los bloqueos administrativos, ni las reservas canceladas, ni los turnos
 pasados.
+
+**El último dueño es un 409 aparte, sin lista**: no es un problema de turnos
+sino de acceso al panel. Ver [`/api/admin/barberos`](#apiadminbarberos).
 
 ---
 
@@ -1074,3 +1088,276 @@ turno** en `/api/disponibilidad`, y **no aparece** en
 |---|---|
 | `Ya existe una reserva en ese horario.` | 400 |
 | `Formato de fecha inválido.` / `Formato de hora inválido. Usá HH:mm.` | 400 |
+
+---
+
+# Clientes (tarea 3.3)
+
+El **scoping es por pertenencia, no por una columna**: un `barbero` ve los
+clientes que atendió al menos una vez, calculado con un `EXISTS` sobre
+`reservas`. Un cliente no "es de" nadie. Un `owner` ve todos.
+
+## `GET /api/admin/clientes`
+
+Query: `skip` (≥ 0), `limit` (1–100), `barberoId` (solo `owner`).
+
+**200:**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "items": [
+      { "id": "…", "nombre": "Juan", "telefono": "+5493416513207",
+        "email": null, "notas": null, "createdAt": "2026-08-17T12:00:00.000Z" }
+    ],
+    "total": 1, "skip": 0, "limit": 100
+  }
+}
+```
+
+## `GET /api/admin/clientes/exportar`
+
+**No devuelve el sobre**: devuelve un CSV.
+
+```
+content-type: text/csv; charset=utf-8
+content-disposition: attachment; filename="clientes-2026-08-17.csv"
+```
+
+Está armado **para Excel**, que es donde lo va a abrir el dueño: lleva BOM
+UTF-8 (sin él, Excel en Windows muestra `PÃ©rez`), separador **`;`** (con coma,
+Excel en español mete todo en una columna) y saltos CRLF. Todos los campos van
+citados, porque `"López, Juan"` es un nombre normal.
+
+Tope: 10.000 filas.
+
+## `GET /api/admin/clientes/:id/historial`
+
+Query: `skip`, `limit` (máx. 200). Un `barbero` ve **solo sus turnos** con ese
+cliente, no el historial completo del cliente con otros barberos.
+
+**200:** `{ items: [{ id, fecha, hora, servicio, estado, barberoId }], total, skip, limit }`
+
+**404** `Cliente no encontrado.` — también cuando el cliente existe pero no es
+de los suyos.
+
+## `POST /api/admin/clientes`
+
+**Solo `owner`.** Body `{ nombre, telefono?, email?, notas? }`.
+
+| Error | Código |
+|---|---|
+| `Solo los dueños pueden crear clientes.` | **403** |
+| `Ya existe un cliente con ese teléfono.` | 400 |
+| `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | 400 |
+
+## `POST /api/admin/clientes/importar`
+
+**Solo `owner`.** Body: lista, o `{ filas: [...] }`. Máximo **1.000**.
+
+Dedup por **teléfono normalizado**: `"0341 15 6513207"` y
+`"+54 9 341 651-3207"` son el mismo cliente. Los que ya existen se cuentan como
+**salteados**, no como error — en una planilla exportada de otro sistema es lo
+normal.
+
+**200:** `{ importados, salteados, errores: [{ fila, motivo }] }`
+
+| Error | Código |
+|---|---|
+| `Solo los dueños pueden importar clientes.` | **403** |
+| `No se pueden importar más de 1000 clientes por vez.` | 400 |
+
+---
+
+# Catálogos y configuración (tarea 3.4)
+
+## Solo dueños — el 403 que no es 401
+
+Todo lo de esta sección es **solo `owner`**, salvo `GET /api/admin/negocio` y
+`GET /api/admin/stats`.
+
+🐛 **El rechazo es `403`, no `401`.** El sistema viejo devuelve 401 y está mal:
+el usuario **está** autenticado, lo que le falta es permiso. Un 401 le dice al
+frontend "volvé a loguearte", y volver a loguearse no cambia nada — el barbero
+sigue sin ser dueño y el panel queda en loop de login.
+
+```json
+{ "ok": false, "error": "Prohibido" }
+```
+
+Sin cookie o con sesión vencida sí es **401**: ahí lo que falta es autenticarse.
+
+## `/api/admin/barberos`
+
+| Método | Ruta | Devuelve |
+|---|---|---|
+| GET | `/api/admin/barberos` | lista completa |
+| POST | `/api/admin/barberos` | el barbero creado |
+| PUT | `/api/admin/barberos/:id` | el barbero actualizado |
+| DELETE | `/api/admin/barberos/:id` | `null` |
+
+Los barberos **son los usuarios del panel**: el `slug` es el nombre de usuario
+del login.
+
+```json
+{ "id": "…", "slug": "gaby", "nombre": "Gaby", "tel": null,
+  "rol": "owner", "activo": 1, "orden": 0,
+  "tienePassword": true, "createdAt": "…" }
+```
+
+`passwordHash` **nunca** sale. En su lugar va `tienePassword`, que es lo único
+que el panel necesita saber.
+
+**⚠️ Este listado incluye a los desactivados**, a diferencia del resto del
+sistema. Es deliberado: el panel es donde se los reactiva. `GET /api/barberos`
+(el público) sí filtra.
+
+**POST** `{ slug, nombre, password?, rol?, tel?, orden?, activo? }`
+- `slug`: minúsculas, `a-z 0-9 -`, 3 a 40 caracteres. Se normaliza solo.
+- `password` es **opcional**: se puede crear el barbero para la agenda y darle
+  acceso al panel después, o nunca. Mínimo 12 caracteres si viene.
+- El barbero **nace con horario**: 7 días de 9 a 20, domingo inactivo. Sin eso
+  no aparecería en la disponibilidad y nadie entendería por qué.
+
+**PUT** es parcial: solo toca los campos presentes.
+
+### 🔴 El último dueño
+
+Tres operaciones dejarían el panel sin nadie que pueda entrar, y las tres dan
+**409**:
+
+| Operación | Mensaje |
+|---|---|
+| desactivar al único owner activo | `No se puede desactivar: es el único dueño y el panel quedaría sin acceso. Nombrá dueño a otro barbero antes.` |
+| borrarlo | `No se puede borrar: …` |
+| cambiarle el rol a `barbero` | `No se puede quitarle el rol de dueño: es el único que queda y el panel quedaría sin acceso. …` |
+
+Un owner **desactivado no cuenta** como respaldo: no puede loguearse.
+
+**Lo mejor es que el panel ni ofrezca el botón** cuando queda un solo dueño.
+El 409 es la red, no la interfaz.
+
+Además, desactivar o borrar a **cualquier** barbero con turnos futuros dispara
+[Bloquear + Avisar](#bloquear--avisar--el-409-con-lista) con la lista.
+
+| Error | Código |
+|---|---|
+| `Ya existe un barbero con ese usuario. Elegí otro.` | 400 |
+| `El usuario solo puede tener letras, números y guiones, y al menos 3 caracteres.` | 400 |
+| `Barbero no encontrado.` | 404 |
+
+## `/api/admin/servicios`
+
+GET / POST / PUT `:id` / DELETE `:id`. `nombre` es **único**.
+
+```json
+{ "id": "…", "nombre": "Corte", "duracionMin": 30,
+  "precioCentavos": 800000, "incluye": null, "activo": 1, "orden": 0 }
+```
+
+- `duracionMin`: entero, 5 a 480.
+- `precioCentavos`: entero ≥ 0. **Son centavos**: `800000` es $8.000. Un
+  decimal se rechaza.
+- Igual que barberos, el listado **incluye los desactivados**.
+
+### ⚠️ El `warning` de la duración — mostralo sí o sí
+
+Si el `PUT` cambia `duracionMin`, la respuesta trae:
+
+```json
+{ "ok": true, "data": { … }, "warning": "La nueva duración se aplica solo a los turnos que se creen de ahora en adelante. Los turnos ya agendados conservan la duración con la que se reservaron." }
+```
+
+Cada reserva guarda su **propia copia** de la duración, así que cambiar el
+servicio no mueve ni un turno ya agendado. Es lo correcto —nadie quiere que le
+corran la agenda de la semana por editar un precio— pero **no es obvio**: quien
+alarga el corte de 30 a 45 minutos espera que mañana se reacomode solo, y no
+va a pasar. Si el panel se come el `warning`, el dueño se entera el día del
+turno.
+
+Sólo aparece cuando la duración **cambió de verdad**; reenviar la misma no
+avisa.
+
+| Error | Código |
+|---|---|
+| `Ya existe un servicio con ese nombre. Elegí otro.` | 400 |
+| `Duración inválida. Tiene que ser un número entero de minutos entre 5 y 480.` | 400 |
+| `Servicio no encontrado.` | 404 |
+
+## `/api/admin/promos` y `/api/admin/catalogo`
+
+Las dos son la **vidriera**: se muestran y no participan de ninguna regla de
+negocio. Nadie *reserva* una promo — lo reservable es `servicios`.
+
+Por eso **no** tienen nombre único (dos promos "2x1" en meses distintos son
+válidas) ni chequeos de conflicto.
+
+GET / POST / PUT `:id` / DELETE `:id` en las dos.
+
+- **promo**: `{ id, nombre, precioCentavos, unidad, nota, badge, activo, orden }`
+- **catálogo**: `{ id, nombre, incluye, precioCentavos, activo, orden }` —
+  `incluye` es `""` cuando está vacío, nunca `null`.
+
+Orden del listado: `orden`, y a igualdad, `nombre`.
+
+## `/api/admin/negocio`
+
+**`GET`: cualquier usuario autenticado** — el panel arranca leyendo esto.
+**`PUT`: solo `owner`**, y es parcial.
+
+```json
+{ "id": 1, "nombreNegocio": "Barbería Gebyanos",
+  "timezone": "America/Argentina/Buenos_Aires",
+  "slotDuracionMin": 30, "minutosAnticipacionMin": 30,
+  "diasMaxAnticipacion": 14,
+  "logoUrl": null, "colorPrimario": null, "colorSecundario": null }
+```
+
+Rangos, **inclusivos en los dos extremos**:
+
+| Campo | Rango |
+|---|---|
+| `slotDuracionMin` | 5 a 240 |
+| `minutosAnticipacionMin` | 0 a 10080 (una semana) |
+| `diasMaxAnticipacion` | 1 a 365 |
+
+`timezone` tiene que ser un identificador **IANA**. El nombre de Windows del
+sistema viejo (`"Argentina Standard Time"`) se rechaza.
+
+**⚠️ Hoy `timezone` es informativo, no operativo**: el cálculo de fechas tiene
+la zona de Argentina fija en el código. Guardar otra cosa no cambia nada. Ver
+`docs/pendientes.md` — hasta que se conecte, el panel no debería ofrecerla como
+una perilla editable.
+
+Cambiar `slotDuracionMin` devuelve un `warning`: los turnos ya agendados
+conservan su horario aunque no coincida con la grilla nueva.
+
+| Error | Código |
+|---|---|
+| `slot_duracion_min inválido. Tiene que ser un número entero entre 5 y 240.` | 400 |
+| `minutos_anticipacion_min inválido. … entre 0 y 10080.` | 400 |
+| `dias_max_anticipacion inválido. … entre 1 y 365.` | 400 |
+| `Zona horaria inválida. Usá un identificador IANA, por ejemplo America/Argentina/Buenos_Aires.` | 400 |
+
+## `GET /api/admin/stats`
+
+Scoped igual que la agenda: un `barbero` cuenta lo suyo y **no puede pedir** las
+de otro (403). Un `owner` cuenta todo, o filtra con `?barberoId=`.
+
+```json
+{ "ok": true, "data": {
+  "hoy": 4, "semana": 21, "mes": 88, "recurrentesActivos": 6,
+  "rango": { "hoy": "2026-08-17", "semanaDesde": "2026-08-17",
+             "semanaHasta": "2026-08-23", "mesDesde": "2026-08-01",
+             "mesHasta": "2026-08-31" }
+} }
+```
+
+Cuenta **turnos activos de cliente**: ni cancelados —no son un compromiso con
+nadie— ni bloqueos administrativos, que son huecos que el barbero se reserva y
+contarlos inflaría el número del día.
+
+**"La semana" es la semana calendario, de lunes a domingo**, no los próximos 7
+días: incluye el lunes y el martes que ya pasaron. El `rango` viene en la
+respuesta para que el panel muestre los límites sin recalcularlos.

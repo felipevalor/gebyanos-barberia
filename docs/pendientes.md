@@ -153,6 +153,24 @@ para ese caso. Si aparece un texto de producción, reemplazarlos.
 | `skip inválido. Tiene que ser un número entero mayor o igual a 0.` | `GET /api/admin/reservas` |
 | `limit inválido. Tiene que ser un número entre 1 y 200.` | `GET /api/admin/reservas` |
 | `Se esperaba una lista de reservas.` | import |
+| `Ya existe un barbero con ese usuario. Elegí otro.` | alta de barbero, slug duplicado |
+| `Ya existe un servicio con ese nombre. Elegí otro.` | alta de servicio |
+| `No se puede desactivar: es el único dueño y el panel quedaría sin acceso. Nombrá dueño a otro barbero antes.` | `PUT /api/admin/barberos/:id` |
+| `No se puede borrar: es el único dueño y el panel quedaría sin acceso. Nombrá dueño a otro barbero antes.` | `DELETE /api/admin/barberos/:id` |
+| `No se puede quitarle el rol de dueño: es el único que queda y el panel quedaría sin acceso. Nombrá dueño a otro barbero antes.` | `PUT /api/admin/barberos/:id` |
+| `Zona horaria inválida. Usá un identificador IANA, por ejemplo America/Argentina/Buenos_Aires.` | `PUT /api/admin/negocio` |
+| `slot_duracion_min inválido. Tiene que ser un número entero entre 5 y 240.` (y sus dos hermanos) | `PUT /api/admin/negocio` |
+| `El usuario solo puede tener letras, números y guiones, y al menos 3 caracteres.` | alta de barbero |
+| `Duración inválida. Tiene que ser un número entero de minutos entre 5 y 480.` | alta/edición de servicio |
+| `Precio inválido. Tiene que ser un número entero de centavos, sin decimales ni negativos.` | servicios, promos, catálogo |
+
+Y los dos **avisos** (campo `warning`, no `error`), que el panel tiene que
+mostrar sí o sí porque describen algo que NO pasa:
+
+| Aviso | Cuándo |
+|---|---|
+| `La nueva duración se aplica solo a los turnos que se creen de ahora en adelante. Los turnos ya agendados conservan la duración con la que se reservaron.` | `PUT /servicios/:id` cambia `duracionMin` |
+| `El nuevo paso de la grilla se aplica a los turnos nuevos. Los ya agendados conservan su horario, aunque no coincida con la grilla nueva.` | `PUT /negocio` cambia `slotDuracionMin` |
 
 ---
 
@@ -245,3 +263,61 @@ La spec usa dos textos distintos para el mismo tipo de error:
 `Intenta` contra `Intente`. Puede ser deliberado (tuteo con el cliente, usted
 con el barbero) o un typo arrastrado del sistema viejo. **Confirmar antes de
 implementar la 2.6**, porque una vez que el frontend los matchee son contrato.
+
+---
+
+## 🔴 Tarea 3.4 — `negocio.timezone` es informativo, no operativo
+
+**Hallazgo, no decisión.** El campo se valida como IANA, se guarda, se muestra
+en el panel y sale en `/api/negocio`... y no cambia absolutamente nada.
+
+`src/domain/dates.ts` tiene la zona **hardcodeada**:
+
+```ts
+export const TZ = 'America/Argentina/Buenos_Aires';
+export const OFFSET_ARGENTINA = '-03:00';
+```
+
+y es de ahí que salen `todayArgentina`, `timeNowArgentina` y `slotAMs`. O sea
+que alguien puede poner `Europe/Madrid` en el panel, verlo guardado, y los
+turnos se siguen calculando en hora de Argentina. Nadie se entera hasta que un
+horario no cierra.
+
+Las dos salidas honestas:
+
+1. **Conectarlo**: que `dates.ts` reciba la zona en vez de tenerla fija. Es más
+   trabajo del que parece — el offset fijo `-03:00` de `slotAMs` deja de valer
+   apenas la zona tenga horario de verano, y ahí hay que usar `Intl` en un
+   camino caliente.
+2. **Sacarlo de la interfaz**: dejar la columna (el sistema es multi-barbería en
+   la Fase 6) pero no ofrecerla como una perilla editable hasta que 1 exista.
+
+Para Gebyanos, que está en Argentina, **la opción 2 es suficiente hoy**. La 1
+recién importa si una barbería de la Fase 6 queda en otra provincia con otro
+huso, cosa que en Argentina no pasa.
+
+---
+
+## Tarea 3.4 — decisiones que la spec no define
+
+**1. "La semana" de las stats es la semana CALENDARIO (lunes a domingo).**
+La spec dice "reservas de hoy, de la semana, del mes" sin definir la semana.
+Se eligió calendario y no "próximos 7 días" porque es lo que el dueño tiene en
+la cabeza cuando mira el panel un jueves: quiere saber cómo viene *esta*
+semana, con el lunes y el martes que ya pasaron adentro. Con una ventana móvil
+el número baja todos los días sin que pase nada. Si el cliente lo lee al revés,
+se cambia en una función (`lunesDeLaSemana`) y sus tests.
+
+**2. Degradar al único dueño se bloquea igual que desactivarlo.**
+La spec nombra desactivar y borrar. `PUT /barberos/:id` con `rol: 'barbero'`
+sobre el único owner hace exactamente el mismo daño —el panel queda sin nadie
+que pueda entrar— y no estaba contemplado. Se agregó con su propio mensaje.
+
+**3. El listado de barberos y el de servicios NO filtran `activo = 1`.**
+Es la excepción deliberada a la regla de oro. El panel es justamente donde se
+reactiva algo dado de baja; si el listado lo escondiera, no habría forma de
+volver a darlo de alta sin tocar la base. Lo público (`services/publico.ts`) sí
+filtra, y hay tests de las dos cosas.
+
+**4. Un owner desactivado no cuenta como respaldo.** `esUltimoOwner` filtra
+`activo = 1`: una cuenta que no puede loguearse no salva a nadie del bloqueo.
