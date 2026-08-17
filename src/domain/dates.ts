@@ -47,6 +47,25 @@ export function addDays(fecha: string, n: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+/**
+ * Todas las fechas "YYYY-MM-DD" de un mes. `mes` es 1-12.
+ *
+ * Devuelve [] si el mes esta fuera de rango, para que el llamador no tenga que
+ * validarlo dos veces.
+ */
+export function diasDelMes(anio: number, mes: number): string[] {
+  if (!Number.isInteger(anio) || !Number.isInteger(mes) || mes < 1 || mes > 12) return [];
+
+  // El dia 0 del mes siguiente es el ultimo del actual: cubre bisiestos solo.
+  const cantidad = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  const mm = String(mes).padStart(2, '0');
+
+  return Array.from(
+    { length: cantidad },
+    (_, i) => `${anio}-${mm}-${String(i + 1).padStart(2, '0')}`,
+  );
+}
+
 /** Dias enteros de `desde` a `hasta`. Negativo si `hasta` es anterior. */
 export function diffDias(desde: string, hasta: string): number {
   const aMs = (f: string) => {
