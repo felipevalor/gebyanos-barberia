@@ -194,7 +194,7 @@ UNIQUE `(barbero_id, fecha)`.
 |---|---|---|
 | `id` | TEXT PK | |
 | `nombre` | TEXT NOT NULL | |
-| `telefono` | TEXT | Índice, no único. Guardado **normalizado** (10 dígitos) |
+| `telefono` | TEXT | **UNIQUE parcial** (`WHERE telefono IS NOT NULL`). Guardado **normalizado** (10 dígitos). El único es necesario: dos Durable Objects de barberos distintos no se ven entre sí y crearían dos clientes con el mismo teléfono |
 | `email` | TEXT | |
 | `notas` | TEXT | |
 | `created_at`, `updated_at` | TEXT NOT NULL | |

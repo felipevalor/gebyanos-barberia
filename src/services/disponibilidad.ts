@@ -82,12 +82,13 @@ export async function duracionDelServicio(
         eq(serviciosBarbero.barberoId, barberoId),
       ),
     )
-    .where(eq(servicios.id, servicioId))
+    .where(and(eq(servicios.id, servicioId), eq(servicios.activo, 1)))
     .limit(1);
 
   const fila = filas[0];
-  // Servicio inexistente: no rechaza, usa el default. Un servicio borrado no
-  // deberia impedir ver horarios.
+  // Servicio inexistente O DESACTIVADO: no rechaza, usa el default. Un
+  // servicio dado de baja no deberia impedir ver horarios, pero tampoco
+  // imponer su duracion.
   if (!fila) return fallbackMin;
 
   return fila.override ?? fila.duracion ?? fallbackMin;

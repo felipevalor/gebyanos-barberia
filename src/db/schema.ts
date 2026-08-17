@@ -124,15 +124,34 @@ export const feriadosOverride = sqliteTable(
 
 // ---------------------------------------------------------------- clientes
 
-export const clientes = sqliteTable('clientes', {
-  id: id(),
-  nombre: text('nombre').notNull(),
-  telefono: text('telefono'),
-  email: text('email'),
-  notas: text('notas'),
-  createdAt: text('created_at').notNull().default(ahora()),
-  updatedAt: text('updated_at').notNull().default(ahora()),
-});
+export const clientes = sqliteTable(
+  'clientes',
+  {
+    id: id(),
+    nombre: text('nombre').notNull(),
+    /** Normalizado a la forma canonica argentina. Identifica al cliente. */
+    telefono: text('telefono'),
+    email: text('email'),
+    notas: text('notas'),
+    createdAt: text('created_at').notNull().default(ahora()),
+    updatedAt: text('updated_at').notNull().default(ahora()),
+  },
+  (t) => [
+    /**
+     * El telefono identifica al cliente, asi que es UNICO.
+     *
+     * Sin esto, dos reservas simultaneas con el mismo telefono y barberos
+     * DISTINTOS crean dos clientes: el Durable Object serializa por barbero,
+     * asi que son dos DOs que no se ven entre si. El indice es la unica
+     * defensa posible, porque no hay un punto de serializacion comun.
+     *
+     * Parcial: varios clientes sin telefono conviven.
+     */
+    uniqueIndex('idx_clientes_telefono')
+      .on(t.telefono)
+      .where(sql`${t.telefono} IS NOT NULL`),
+  ],
+);
 
 // ---------------------------------------------------------------- reservas
 

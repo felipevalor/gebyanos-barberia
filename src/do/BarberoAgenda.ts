@@ -78,12 +78,27 @@ export const MENSAJE_OVERLAP =
 /**
  * True si el error de D1 es una violacion de indice unico.
  *
+ * Sirve para los dos unicos que defienden este flujo: el del slot
+ * (barbero_id, fecha, hora) y el del telefono del cliente.
+ *
  * El texto exacto varia segun la capa (`D1_ERROR:` desde el Worker,
  * ` [code: 7500]` desde wrangler --remote). Lo estable es el nucleo.
  * Ver docs/spike-indice-unico-parcial.md.
  */
-export function esColisionDeSlot(e: unknown): boolean {
+export function esViolacionDeUnico(e: unknown): boolean {
   return e instanceof Error && e.message.includes('UNIQUE constraint failed');
+}
+
+/**
+ * Especifico del indice del SLOT.
+ *
+ * Existen dos unicos en este flujo — `reservas(barbero_id, fecha, hora)` y
+ * `clientes(telefono)` — y solo el primero significa "el turno se ocupo". Sin
+ * esta distincion, un choque de telefono se le reportaria al cliente como
+ * "este turno acaba de ser reservado por alguien más", que es mentira.
+ */
+export function esColisionDeSlot(e: unknown): boolean {
+  return esViolacionDeUnico(e) && (e as Error).message.includes('reservas.');
 }
 
 export class BarberoAgenda extends DurableObject<Env> {
@@ -130,30 +145,54 @@ export class BarberoAgenda extends DurableObject<Env> {
   /**
    * Busca el cliente por telefono; actualiza el nombre si existe, lo crea si
    * no. Devuelve su id.
+   *
+   * ⚠️ ESTE DO NO ALCANZA PARA SERIALIZAR ESTO.
+   *
+   * `blockConcurrencyWhile` serializa las escrituras de UN barbero, porque el
+   * DO se direcciona con `idFromName(barberoId)`. Dos reservas simultaneas del
+   * mismo telefono con barberos DISTINTOS son dos instancias que no se ven
+   * entre si: las dos leen "no existe" y las dos insertan.
+   *
+   * No hay punto de serializacion comun — meter todos los clientes en un DO
+   * global convertiria el alta de clientes en el cuello de botella del
+   * sistema. La defensa es el indice unico parcial sobre `clientes.telefono`,
+   * y este manejo del choque: si el INSERT viola el unico, es que la otra
+   * instancia gano la carrera, asi que se relee su fila.
    */
   async #upsertCliente(nombre: string, telefono: string): Promise<string> {
-    const existente = await this.env.DB.prepare(
-      'SELECT id FROM clientes WHERE telefono = ? LIMIT 1',
-    )
-      .bind(telefono)
-      .first<{ id: string }>();
+    const buscar = () =>
+      this.env.DB.prepare('SELECT id FROM clientes WHERE telefono = ? LIMIT 1')
+        .bind(telefono)
+        .first<{ id: string }>();
 
     const ahora = new Date().toISOString();
 
-    if (existente) {
+    const actualizar = async (id: string): Promise<string> => {
       await this.env.DB.prepare('UPDATE clientes SET nombre = ?, updated_at = ? WHERE id = ?')
-        .bind(nombre, ahora, existente.id)
+        .bind(nombre, ahora, id)
         .run();
-      return existente.id;
-    }
+      return id;
+    };
+
+    const existente = await buscar();
+    if (existente) return actualizar(existente.id);
 
     const id = uuidv7();
-    await this.env.DB.prepare(
-      'INSERT INTO clientes (id, nombre, telefono, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-    )
-      .bind(id, nombre, telefono, ahora, ahora)
-      .run();
-    return id;
+    try {
+      await this.env.DB.prepare(
+        'INSERT INTO clientes (id, nombre, telefono, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      )
+        .bind(id, nombre, telefono, ahora, ahora)
+        .run();
+      return id;
+    } catch (e) {
+      if (!esViolacionDeUnico(e)) throw e;
+
+      // Otro DO lo creo entre nuestro SELECT y nuestro INSERT.
+      const ganador = await buscar();
+      if (!ganador) throw e; // el unico salto por otra razon: no tragarselo
+      return actualizar(ganador.id);
+    }
   }
 
   async #reservarSerializado(input: ReservaInput): Promise<ReservaResult> {

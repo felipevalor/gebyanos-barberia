@@ -145,11 +145,11 @@ describe('las once validaciones de negocio', () => {
   it('5. telefono que no es argentino', async () => {
     // El unico mensaje inventado del endpoint: la spec no lo define.
     expect(errorDe(await reservar({ clienteTelefono: '+1 212 555 1234' }))).toBe(
-      'Teléfono inválido. Ingresá un número argentino de 10 dígitos.',
+      'Revisá el teléfono. Tiene que ser un número argentino válido con código de área.',
     );
     // normalizeTel sola devolveria "123" y lo guardaria corrupto.
     expect(errorDe(await reservar({ clienteTelefono: '123' }))).toBe(
-      'Teléfono inválido. Ingresá un número argentino de 10 dígitos.',
+      'Revisá el teléfono. Tiene que ser un número argentino válido con código de área.',
     );
   });
 
@@ -166,6 +166,27 @@ describe('las once validaciones de negocio', () => {
       'SELECT servicio, duracion_min, servicio_id FROM reservas',
     ).first<{ servicio: string; duracion_min: number; servicio_id: string | null }>();
 
+    expect(fila?.servicio).toBe('Servicio');
+    expect(fila?.duracion_min).toBe(30);
+    expect(fila?.servicio_id).toBeNull();
+  });
+
+  it('7. servicio DESACTIVADO tampoco rechaza, pero no impone su duracion', async () => {
+    const discontinuado = uuidv7();
+    await env.DB.prepare(
+      "INSERT INTO servicios (id, nombre, duracion_min, activo) VALUES (?, 'Discontinuado', 90, 0)",
+    )
+      .bind(discontinuado)
+      .run();
+
+    const r = await reservar({ servicioId: discontinuado });
+    expect(r.estado).toBe('exito');
+
+    const fila = await env.DB.prepare(
+      'SELECT servicio, duracion_min, servicio_id FROM reservas',
+    ).first<{ servicio: string; duracion_min: number; servicio_id: string | null }>();
+
+    // Se cae al default: NO usa el nombre ni los 90 min del servicio de baja.
     expect(fila?.servicio).toBe('Servicio');
     expect(fila?.duracion_min).toBe(30);
     expect(fila?.servicio_id).toBeNull();
@@ -217,19 +238,16 @@ describe('las once validaciones de negocio', () => {
     ).toBe('exito');
   });
 
-  it('10. ⚠️ el paso 10 es INALCANZABLE en el orden de la spec', async () => {
-    // "99:99" pasa el regex de forma, pero el paso 8 corre ANTES: evaluarSlot
-    // la ve fuera de todos los bloques y devuelve 'fueraDeHorario'. El cliente
-    // nunca llega a ver "Formato de hora inválido.".
+  it('10. las horas imposibles las ataja la validacion de forma', async () => {
+    // El regex de forma es estricto (^([01]\d|2[0-3]):[0-5]\d$), asi que
+    // "99:99" y "24:00" se rechazan con el mensaje preciso en vez de caer en
+    // el paso 8 y salir como "fuera del horario de atención".
     //
-    // Este test documenta el comportamiento REAL, no el deseado. Si se decide
-    // mover la validacion de hora antes del paso 8, este test cambia.
-    expect(errorDe(await reservar({ hora: '99:99' }))).toBe(
-      'El horario elegido está fuera del horario de atención.',
-    );
-    expect(errorDe(await reservar({ hora: '24:00' }))).toBe(
-      'El horario elegido está fuera del horario de atención.',
-    );
+    // El paso 10 queda como defensa en profundidad INALCANZABLE, y esta bien
+    // que lo sea. Ver docs/pendientes.md.
+    for (const hora of ['99:99', '24:00', '10:60', '23:99']) {
+      expect(errorDe(await reservar({ hora }))).toBe('Formato de hora inválido. Use HH:mm.');
+    }
   });
 
   it('11. solapamiento via el Durable Object', async () => {
@@ -257,7 +275,7 @@ describe('el ORDEN de las validaciones', () => {
 
   it('el telefono invalido gana sobre el barbero invalido', async () => {
     expect(errorDe(await reservar({ clienteTelefono: '123', barberoId: uuidv7() }))).toBe(
-      'Teléfono inválido. Ingresá un número argentino de 10 dígitos.',
+      'Revisá el teléfono. Tiene que ser un número argentino válido con código de área.',
     );
   });
 
@@ -361,6 +379,66 @@ describe('upsert del cliente', () => {
       'SELECT r.cliente_id, c.id FROM reservas r JOIN clientes c ON c.id = r.cliente_id',
     ).first<{ cliente_id: string }>();
     expect(fila?.cliente_id).toBeTruthy();
+  });
+
+  it('dos reservas simultaneas, mismo telefono, barberos DISTINTOS: un solo cliente', async () => {
+    // El Durable Object se direcciona con idFromName(barberoId), asi que estas
+    // dos reservas son DOS instancias que no se ven entre si: las dos leen
+    // "el cliente no existe" y las dos intentan insertarlo.
+    //
+    // Lo unico que puede evitar el duplicado es el indice unico parcial sobre
+    // clientes.telefono, mas el manejo del choque en el upsert.
+    const otro = uuidv7();
+    await env.DB.prepare("INSERT INTO barberos (id, slug, nombre) VALUES (?, ?, 'Otro')")
+      .bind(otro, 's' + otro)
+      .run();
+    for (let dow = 0; dow <= 6; dow++) {
+      await env.DB.prepare(
+        'INSERT INTO barbero_horarios (id, barbero_id, dow, hora_inicio, hora_fin) VALUES (?, ?, ?, 9, 13)',
+      )
+        .bind(uuidv7(), otro, dow)
+        .run();
+    }
+
+    const [a, b] = await Promise.all([
+      reservar({ barberoId: BARBERO, hora: '10:00', clienteTelefono: '3416513207' }),
+      reservar({ barberoId: otro, hora: '10:00', clienteTelefono: '3416513207' }),
+    ]);
+
+    // Las dos reservas son validas: son barberos distintos.
+    expect(a.estado).toBe('exito');
+    expect(b.estado).toBe('exito');
+
+    const clientes = await env.DB.prepare('SELECT id FROM clientes WHERE telefono = ?')
+      .bind('3416513207')
+      .all();
+    expect(clientes.results).toHaveLength(1);
+
+    // Y las dos reservas apuntan al MISMO cliente.
+    const reservas = await env.DB.prepare(
+      'SELECT DISTINCT cliente_id FROM reservas WHERE cliente_id IS NOT NULL',
+    ).all();
+    expect(reservas.results).toHaveLength(1);
+  });
+
+  it('el indice unico de telefono rechaza un duplicado insertado a mano', async () => {
+    await reservar({});
+
+    await expect(
+      env.DB.prepare("INSERT INTO clientes (id, nombre, telefono) VALUES (?, 'Colado', ?)")
+        .bind(uuidv7(), '3416513207')
+        .run(),
+    ).rejects.toThrowError(/UNIQUE constraint failed/);
+  });
+
+  it('varios clientes SIN telefono conviven: el unico es parcial', async () => {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO clientes (id, nombre) VALUES (?, 'Sin tel 1')").bind(uuidv7()),
+      env.DB.prepare("INSERT INTO clientes (id, nombre) VALUES (?, 'Sin tel 2')").bind(uuidv7()),
+    ]);
+
+    const filas = await env.DB.prepare('SELECT id FROM clientes WHERE telefono IS NULL').all();
+    expect(filas.results).toHaveLength(2);
   });
 
   it('un intento rechazado por overlap NO crea cliente', async () => {

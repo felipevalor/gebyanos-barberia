@@ -183,7 +183,7 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 | `barberoId` | requerido | `barberoId es obligatorio.` |
 | `servicioId` | requerido | `servicioId es obligatorio.` |
 | `fecha` | requerido | `fecha es obligatoria.` |
-| `hora` | requerido, regex `^\d{2}:\d{2}$` | `Formato de hora inválido. Use HH:mm.` |
+| `hora` | requerido, regex `^([01]\d|2[0-3]):[0-5]\d$` | `Formato de hora inválido. Use HH:mm.` |
 | `clienteNombre` | requerido, máx 100 | `clienteNombre es obligatorio.` / `El nombre no puede superar los 100 caracteres.` |
 | `clienteTelefono` | requerido, máx 20 | `clienteTelefono es obligatorio.` / `El teléfono no puede superar los 20 caracteres.` |
 | `mensaje` | máx 500 | `El mensaje no puede superar los 500 caracteres.` |
@@ -198,12 +198,12 @@ Devuelve qué días del mes tienen al menos un slot libre, para que el frontend 
 | 2 | `fecha >= hoy` | `No se puede agendar un turno en el pasado.` |
 | 3 | `fecha <= hoy + diasMaxAnticipacion` | `Solo se puede reservar con hasta {N} días de anticipación.` |
 | 4 | Si es hoy, la hora no pasó | `No se puede agendar un turno en un horario que ya pasó.` |
-| 5 | Normalizar teléfono | — |
+| 5 | Normalizar y **validar** el teléfono con `esTelefonoArgentino` | `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` |
 | 6 | Barbero existe y activo | `Barbero inválido.` |
 | 7 | Servicio existe | Si no, usar nombre `"Servicio"` y duración default. **No rechaza** |
 | 8 | `evaluarSlot() === 'abierto'` | El mensaje de `mensajeCliente()` |
 | 9 | `cumpleAnticipacion()` | `Debés reservar con al menos {N} minutos de anticipación.` |
-| 10 | Hora parseable `HH:mm` | `Formato de hora inválido.` |
+| 10 | Hora parseable `HH:mm` — **defensa en profundidad, inalcanzable** | `Formato de hora inválido.` |
 | 11 | Sin solapamiento — **vía el DO** | `Lo sentimos, este turno acaba de ser reservado por alguien más.` |
 
 **El paso 8 es la regla de oro: el backend valida disponibilidad aunque el frontend ya haya ocultado el slot.** Nunca confíes en el cliente.

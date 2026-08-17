@@ -86,7 +86,11 @@ export function validarForma(
   if (!barberoId) return { ok: false, error: 'barberoId es obligatorio.' };
   if (!servicioId) return { ok: false, error: 'servicioId es obligatorio.' };
   if (!fecha) return { ok: false, error: 'fecha es obligatoria.' };
-  if (!/^\d{2}:\d{2}$/.test(hora)) {
+  // Regex estricto, igual que `esHoraValida`: asi "99:99" y "24:00" se
+  // rechazan acá con un mensaje preciso. Con `^\d{2}:\d{2}$` pasaban de largo
+  // y terminaban cayendo en el paso 8 con "fuera del horario de atención",
+  // que no es lo que pasa.
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) {
     return { ok: false, error: 'Formato de hora inválido. Use HH:mm.' };
   }
   if (!clienteNombre) return { ok: false, error: 'clienteNombre es obligatorio.' };
@@ -185,7 +189,7 @@ export async function crearReserva(
   //    El mensaje NO viene de la spec: es el unico string inventado de este
   //    endpoint. Ver docs/pendientes.md.
   if (!esTelefonoArgentino(datos.clienteTelefono)) {
-    return invalido('Teléfono inválido. Ingresá un número argentino de 10 dígitos.');
+    return invalido('Revisá el teléfono. Tiene que ser un número argentino válido con código de área.');
   }
   const telefono = normalizeTel(datos.clienteTelefono);
 
@@ -211,7 +215,7 @@ export async function crearReserva(
           eq(serviciosBarbero.barberoId, datos.barberoId),
         ),
       )
-      .where(eq(servicios.id, datos.servicioId))
+      .where(and(eq(servicios.id, datos.servicioId), eq(servicios.activo, 1)))
       .limit(1),
     cliente
       .select({ inicio: barberoHorarios.horaInicio, fin: barberoHorarios.horaFin })
@@ -238,8 +242,9 @@ export async function crearReserva(
   const barbero = barberoFila[0];
   if (!barbero) return invalido('Barbero inválido.');
 
-  // 7. Servicio: si no existe NO rechaza. Un servicio borrado no deberia
-  //    impedir reservar.
+  // 7. Servicio: si no existe O ESTA DESACTIVADO, NO rechaza. Un servicio
+  //    dado de baja no deberia impedir reservar; se cae al nombre y la
+  //    duracion por defecto.
   const servicio = servicioFila[0];
   const servicioNombre = servicio?.nombre ?? SERVICIO_DESCONOCIDO;
   const duracionMin = servicio?.override ?? servicio?.duracion ?? slotDuracionMin;

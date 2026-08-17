@@ -64,6 +64,12 @@ CREATE UNIQUE INDEX idx_reservas_slot
 
 CREATE INDEX idx_reservas_fecha ON reservas(fecha);
 CREATE INDEX idx_reservas_telefono ON reservas(telefono);
+
+-- El teléfono identifica al cliente. Sin este único, dos reservas simultáneas
+-- con el mismo teléfono y barberos DISTINTOS crean dos clientes: son dos
+-- Durable Objects que no se ven entre sí.
+CREATE UNIQUE INDEX idx_clientes_telefono
+  ON clientes(telefono) WHERE telefono IS NOT NULL;
 CREATE UNIQUE INDEX idx_reservas_cancel_token
   ON reservas(cancel_token) WHERE cancel_token IS NOT NULL;
 

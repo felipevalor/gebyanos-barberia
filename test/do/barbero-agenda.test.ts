@@ -1,6 +1,6 @@
 import { env, applyD1Migrations } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import { esColisionDeSlot, type ReservaInput } from '../../src/do/BarberoAgenda';
+import { esViolacionDeUnico, type ReservaInput } from '../../src/do/BarberoAgenda';
 import { uuidv7 } from '../../src/db/id';
 
 const BARBERO = '01930000-0000-7000-8000-0000000000aa';
@@ -206,25 +206,25 @@ describe('mapeo del error de constraint de D1', () => {
     const real = new Error(
       'D1_ERROR: UNIQUE constraint failed: reservas.barbero_id, reservas.fecha, reservas.hora: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)',
     );
-    expect(esColisionDeSlot(real)).toBe(true);
+    expect(esViolacionDeUnico(real)).toBe(true);
   });
 
   it('reconoce las otras dos formas del mismo error', () => {
     // wrangler --local
     expect(
-      esColisionDeSlot(new Error('UNIQUE constraint failed: reservas.barbero_id')),
+      esViolacionDeUnico(new Error('UNIQUE constraint failed: reservas.barbero_id')),
     ).toBe(true);
     // wrangler --remote
     expect(
-      esColisionDeSlot(new Error('UNIQUE constraint failed: reservas.hora [code: 7500]')),
+      esViolacionDeUnico(new Error('UNIQUE constraint failed: reservas.hora [code: 7500]')),
     ).toBe(true);
   });
 
   it('NO confunde otros errores con overlap', () => {
-    expect(esColisionDeSlot(new Error('D1_ERROR: no such table: reservas'))).toBe(false);
-    expect(esColisionDeSlot(new Error('FOREIGN KEY constraint failed'))).toBe(false);
-    expect(esColisionDeSlot('un string')).toBe(false);
-    expect(esColisionDeSlot(null)).toBe(false);
+    expect(esViolacionDeUnico(new Error('D1_ERROR: no such table: reservas'))).toBe(false);
+    expect(esViolacionDeUnico(new Error('FOREIGN KEY constraint failed'))).toBe(false);
+    expect(esViolacionDeUnico('un string')).toBe(false);
+    expect(esViolacionDeUnico(null)).toBe(false);
   });
 
   it('una escritura que se saltea el DO igual choca contra el indice unico', async () => {

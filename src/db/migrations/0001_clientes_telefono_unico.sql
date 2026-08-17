@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `idx_clientes_telefono` ON `clientes` (`telefono`) WHERE "clientes"."telefono" IS NOT NULL;

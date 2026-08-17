@@ -83,6 +83,52 @@ cachean**: un slot puede ocuparse en cualquier momento.
 
 ---
 
+## Regla del `activo = 1`
+
+**Toda consulta a una tabla con columna `activo` tiene que filtrarla, salvo que
+sea explícitamente una vista de administración.**
+
+Tablas con `activo`: `barberos`, `servicios`, `barbero_horarios`, `promos`,
+`catalogo`, `clientes_recurrentes`.
+
+Olvidarlo no rompe nada visiblemente: la consulta devuelve datos de más y el
+sistema **se contradice a sí mismo** en otro lado. Los dos casos que ya pasaron:
+
+| Olvido | Síntoma |
+|---|---|
+| `barberos.activo` en disponibilidad | Un barbero dado de baja seguía ofreciendo horarios, y al reservar rebotaba con `Barbero inválido.` |
+| `servicios.activo` en disponibilidad y en la reserva | Un servicio discontinuado se podía reservar, y además imponía su duración |
+
+### El barrido
+
+Para chequear el sistema entero:
+
+```bash
+python3 - <<'PY'
+import re, pathlib
+tablas = {'barberos','servicios','barberoHorarios','promos','catalogo','clientesRecurrentes'}
+for p in sorted(pathlib.Path('src').rglob('*.ts')):
+    s = p.read_text()
+    for m in re.finditer(r'\.from\((\w+)\)', s):
+        t = m.group(1)
+        if t not in tablas: continue
+        v = s[m.start(): m.start()+700]
+        sig = v.find('.from(', 6)
+        if sig > 0: v = v[:sig]
+        marca = 'OK ' if f'{t}.activo' in v else '❌ '
+        print(f"{marca}{p}:{s[:m.start()].count(chr(10))+1}  .from({t})")
+PY
+```
+
+### Qué hacer con lo desactivado
+
+**No rechazar por eso solo.** Un servicio dado de baja no debería impedir
+reservar: se trata como inexistente y se cae al default (`"Servicio"`, duración
+del slot). Un barbero desactivado sí es `Barbero inválido.`, porque sin barbero
+no hay turno posible.
+
+---
+
 ## Qué NO sale por endpoints anónimos
 
 Las queries seleccionan columnas de forma explícita, nunca `SELECT *`. En

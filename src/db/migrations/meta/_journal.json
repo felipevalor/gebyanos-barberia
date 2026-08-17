@@ -8,6 +8,13 @@
       "when": 1786806289180,
       "tag": "0000_schema_inicial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786987624848,
+      "tag": "0001_clientes_telefono_unico",
+      "breakpoints": true
     }
   ]
 }

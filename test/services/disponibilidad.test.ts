@@ -199,6 +199,25 @@ describe('duracion del servicio', () => {
     expect(res.slots).not.toContain('12:30');
   });
 
+  it('un servicio DESACTIVADO no impone su duracion: cae al paso de grilla', async () => {
+    const discontinuado = uuidv7();
+    await env.DB.prepare(
+      "INSERT INTO servicios (id, nombre, duracion_min, activo) VALUES (?, 'Discontinuado', 90, 0)",
+    )
+      .bind(discontinuado)
+      .run();
+
+    const res = await disponibilidadDelDia(
+      env.DB,
+      { barberoId: CON_HORARIO, fecha: FUTURO, servicioId: discontinuado },
+      ahoraA('08:00'),
+    );
+
+    // Si contara, la duracion seria 90 y no habria slot a las 12:30.
+    expect(res.duracionMin).toBe(30);
+    expect(res.slots).toContain('12:30');
+  });
+
   it('un servicio inexistente no rompe: usa el paso de grilla', async () => {
     const res = await disponibilidadDelDia(
       env.DB,

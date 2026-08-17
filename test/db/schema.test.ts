@@ -41,7 +41,7 @@ describe('schema', () => {
     ]);
   });
 
-  it('crea los 11 indices declarados', async () => {
+  it('crea los 12 indices declarados', async () => {
     const { results } = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'",
     ).all<{ name: string }>();
@@ -49,6 +49,7 @@ describe('schema', () => {
     expect(results.map((r) => r.name).sort()).toEqual([
       'idx_barbero_horarios',
       'idx_barberos_slug',
+      'idx_clientes_telefono',
       'idx_feriados',
       'idx_magic_expires',
       'idx_reservas_cancel_token',
