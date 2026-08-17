@@ -215,9 +215,13 @@ El flujo, en tres pasos:
 
 ## El contrato de API
 
-⚠️ **Este documento se genera cuando cierre la tarea 2.4 del backend**, leyendo el código real. Hasta entonces, el frontend no debe inventar contratos.
+✅ **Ya existe: `docs/contrato-api.md`.** Está generado leyendo el código real, no propuesto — con cada endpoint, sus parámetros, la forma exacta de cada respuesta y los 26 mensajes de error textuales.
 
-Lo que ya está firme y podés usar:
+**Es la fuente de verdad. Leelo completo antes de escribir el cliente de API, y no inventes nada que no esté ahí.** Si encontrás un hueco, preguntá en vez de asumir: el backend está vivo y se puede corregir.
+
+Documenta también cosas que no se deducen del código y te van a ahorrar tiempo: que el error de solapamiento es 400 y no 409, que `slots: []` es un 200 normal con siete causas distintas, que hay que pasar `servicioId` a disponibilidad porque el barbero puede tener una duración propia para ese servicio, y que el `cancelToken` no se puede recuperar después de crearlo.
+
+Lo esencial, resumido acá para que no tengas que ir y volver:
 
 **El sobre de respuesta:**
 

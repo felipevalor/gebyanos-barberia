@@ -29,6 +29,8 @@ Existe un sistema anterior en .NET 8 + Azure SQL, en producción. **No se migra 
 
 Si al implementar algo aparece un límite del plan Free que bloquea, **la respuesta no es "pasamos a Workers Paid"** — es buscar la alternativa gratuita, y si no existe, frenar y avisar.
 
+📌 **Sin excepciones, tampoco para producción.** El sistema sale a producción en Free y se queda ahí. Workers Paid ($5/mes) es el plan de contingencia si algo lo fuerza, no un paso planificado. Ver la sección de CPU más abajo: hay un riesgo identificado, con su síntoma y su arreglo escritos, y ese es el nivel de preparación que necesitamos — no pagar por adelantado.
+
 Lo que el free tier da y lo que consume una barbería:
 
 | Recurso | Límite Free | Uso estimado |
@@ -45,7 +47,41 @@ Lo que el free tier da y lo que consume una barbería:
 
 **Sobra por dos órdenes de magnitud en todo, menos en uno.**
 
-⚠️ **El único límite que aprieta de verdad son los 10 ms de CPU por request.** Por eso el hashing de passwords es PBKDF2 y no BCrypt (tarea 2.5). Si alguna otra operación se acerca a ese techo, hay que optimizarla, no subir de plan.
+### ⚠️ El límite de CPU: lo documentado y lo medido no coinciden
+
+**La documentación dice 10 ms por request en el plan Free.** Medido contra el Worker real deployado (cuenta confirmada en **Workers Free**, sin método de pago):
+
+| Medición | Resultado |
+|---|---|
+| Una derivación PBKDF2 de 50k | **~11,6 ms** — y funciona |
+| Login completo | **20–57 ms** de CPU — y funciona |
+| Techo efectivo observado | **~1,8 segundos** |
+
+O sea que Cloudflare hoy es **mucho más permisivo que su propia documentación**.
+
+🔴 **No construyas asumiendo 1,8 s.** El comportamiento no documentado no es un contrato: la documentación dice 10 ms, y si Cloudflare empieza a aplicarlo, el login se rompe sin aviso y sin que nadie haya cambiado código.
+
+**Y notá esto:** el login completo consume 20–57 ms. Si los 10 ms se aplicaran, fallaría **con cualquier cantidad de iteraciones**, incluso cero. Bajar el factor de trabajo no es una mitigación.
+
+**La regla operativa:**
+
+- **No subas las iteraciones del hash** apoyándote en este margen. 50.000 se queda.
+- **No metas operaciones nuevas de CPU intensivo** en el camino de un request. El presupuesto ya está gastado.
+- **Se sale a producción en Free.** El riesgo está identificado y no bloquea nada.
+
+**Qué hacer si algún día se rompe.** Este es el punto de la nota — no evitar el riesgo, sino no perder una tarde diagnosticándolo:
+
+| Síntoma | Qué es | Arreglo |
+|---|---|---|
+| El login empieza a devolver 500 sin que nadie haya tocado código, y el log de Cloudflare dice `exceededCpu` | Cloudflare empezó a aplicar el límite documentado de 10 ms | Workers Paid ($5/mes). El tope pasa a 30 s y el problema desaparece |
+
+**Sin esta nota, ese día se debuggea código que está bien.** Con ella, es un click.
+
+**Cuidado con generalizar:** que el límite de CPU sea blando no significa que todos lo sean. **El de bases D1 sí se aplica** — se ve en la pantalla de uso de la cuenta. Ese techo de 10 es real y limita la Fase 6.
+
+**Cómo medir CPU en producción, si hace falta de nuevo:** `performance.now()` está congelado dentro del Worker (devuelve siempre 0, es mitigación de Spectre). Lo que funciona es un endpoint temporal con N repeticiones de la operación, leer `cpuTime` de `wrangler tail`, y sacar la pendiente. Borrá el endpoint después y verificá el 404.
+
+**Y una regla general que salió de esto: el edge es ~3× más lento que una máquina de desarrollo.** Toda medición local necesita ese factor antes de creerle.
 
 📌 **Queues SÍ está en el plan gratuito** desde febrero de 2026: 10.000 operaciones/día, retención de 24 h. Si alguna herramienta o documentación dice que requiere Workers Paid, está desactualizada — [confirmado en la doc oficial](https://developers.cloudflare.com/queues/platform/pricing/).
 

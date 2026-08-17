@@ -274,7 +274,13 @@ Set-Cookie: admin_token={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Expires
 
 **Compensá la diferencia con largo de contraseña, no con iteraciones:** exigí mínimo 12 caracteres. Dos caracteres extra en la contraseña valen mucho más que duplicar el factor de trabajo.
 
-📌 **Restricción arquitectónica a tener presente:** la recomendación de seguridad estándar es *subir* las iteraciones con los años. **En el plan gratuito eso no se puede** — 150k ya excede el límite. Si algún día hace falta más costo de hasheo, la salida no es subir el número: es Workers Paid, que sube el límite de CPU a 30 segundos. Anotalo como limitación conocida con esa salida.
+📌 **Restricción arquitectónica a tener presente:** la recomendación de seguridad estándar es *subir* las iteraciones con los años. **Según la documentación del plan gratuito eso no se puede.** Si algún día hace falta más costo de hasheo, la salida no es subir el número: es Workers Paid, que sube el límite de CPU a 30 segundos.
+
+⚠️ **Medido en producción, el margen real es mucho mayor que el documentado** (ver la sección de CPU en `00-CONTEXTO.md`): una derivación de 50k cuesta ~11,6 ms en el edge y funciona, cuando la documentación dice que el techo son 10 ms.
+
+**Eso NO habilita subir las iteraciones.** Es permisividad no documentada de Cloudflare, no una garantía — y el login completo ya consume 20–57 ms, así que si los 10 ms se aplicaran, fallaría con cualquier configuración. **50.000 se queda.**
+
+El proyecto sale a producción en Free. El riesgo está anotado con su síntoma y su arreglo en `00-CONTEXTO.md`; no bloquea el lanzamiento.
 
 El sistema viejo usa BCrypt cost 12, pero **BCrypt no entra en los 10 ms de CPU del plan Free** de Workers y obligaría a Workers Paid. Como arrancás de cero no hay hashes legacy que soportar, así que PBKDF2 es la opción correcta: nativo, sin dependencias, y elimina la dependencia del plan pago para un endpoint de login.
 
