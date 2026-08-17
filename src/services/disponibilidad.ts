@@ -2,6 +2,7 @@ import { and, eq, gte, lte } from 'drizzle-orm';
 import { db } from '../db/client';
 import {
   barberoHorarios,
+  barberos,
   feriadosOverride,
   negocio,
   reservas,
@@ -124,14 +125,20 @@ export async function disponibilidadDelDia(
   const cliente = db(d1);
 
   const [bloques, overrides, ocupados] = await Promise.all([
+    // El innerJoin con `barberos` es el filtro de barbero desactivado. Sin
+    // el, un barbero dado de baja sigue ofreciendo horarios y la reserva de
+    // la 2.4 despues rebota con "Barbero inválido.": el sistema se
+    // contradice a si mismo. No cuesta una query extra.
     cliente
       .select({ inicio: barberoHorarios.horaInicio, fin: barberoHorarios.horaFin })
       .from(barberoHorarios)
+      .innerJoin(barberos, eq(barberos.id, barberoHorarios.barberoId))
       .where(
         and(
           eq(barberoHorarios.barberoId, params.barberoId),
           eq(barberoHorarios.dow, dow),
           eq(barberoHorarios.activo, 1),
+          eq(barberos.activo, 1),
         ),
       ),
     cliente
@@ -226,8 +233,13 @@ export async function disponibilidadDelMes(
         fin: barberoHorarios.horaFin,
       })
       .from(barberoHorarios)
+      .innerJoin(barberos, eq(barberos.id, barberoHorarios.barberoId))
       .where(
-        and(eq(barberoHorarios.barberoId, params.barberoId), eq(barberoHorarios.activo, 1)),
+        and(
+          eq(barberoHorarios.barberoId, params.barberoId),
+          eq(barberoHorarios.activo, 1),
+          eq(barberos.activo, 1),
+        ),
       ),
     // query 4: overrides del rango
     cliente

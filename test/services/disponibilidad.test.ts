@@ -26,12 +26,25 @@ function contando(d1: D1Database) {
   const proxy = new Proxy(d1, {
     get(target, prop, receiver) {
       const valor = Reflect.get(target, prop, receiver) as unknown;
+
       if (prop === 'prepare' && typeof valor === 'function') {
         return (...args: unknown[]) => {
           n += 1;
           return (valor as (...a: unknown[]) => unknown).apply(target, args);
         };
       }
+
+      // `batch` no pasa por `prepare` del binding contado: cada statement se
+      // preparo antes. Se cuenta el batch como sus N sentencias, que es lo que
+      // cuesta. Hoy disponibilidad no lo usa, pero el import masivo de la 2.7
+      // es candidato a reusar este helper.
+      if (prop === 'batch' && typeof valor === 'function') {
+        return (sentencias: unknown[]) => {
+          n += Array.isArray(sentencias) ? sentencias.length : 1;
+          return (valor as (...a: unknown[]) => unknown).apply(target, [sentencias]);
+        };
+      }
+
       if (typeof valor === 'function') return (valor as () => unknown).bind(target);
       return valor;
     },
@@ -208,7 +221,7 @@ describe('duracion del servicio', () => {
 });
 
 describe('criterios de aceptacion — mes', () => {
-  it('no hace mas de 5 queries a D1, sin importar los dias del mes', async () => {
+  it('CON servicioId: exactamente 5 queries — el caso del criterio', async () => {
     const { d1, queries } = contando(env.DB);
 
     await disponibilidadDelMes(
@@ -217,17 +230,59 @@ describe('criterios de aceptacion — mes', () => {
       ahoraA('08:00'),
     );
 
-    expect(queries()).toBeLessThanOrEqual(5);
+    // Exacto, no <=: si sube a 6 hay que enterarse aunque siga "cerca".
+    expect(queries()).toBe(5);
+  });
+
+  it('SIN servicioId: 4 queries — se saltea la de la duracion', async () => {
+    const { d1, queries } = contando(env.DB);
+
+    await disponibilidadDelMes(d1, { barberoId: CON_HORARIO, anio: 2027, mes: 3 }, ahoraA('08:00'));
+
+    expect(queries()).toBe(4);
   });
 
   it('un mes de 31 dias no cuesta mas queries que uno de 28', async () => {
     const marzo = contando(env.DB);
-    await disponibilidadDelMes(marzo.d1, { barberoId: CON_HORARIO, anio: 2027, mes: 3 }, ahoraA('08:00'));
+    await disponibilidadDelMes(
+      marzo.d1,
+      { barberoId: CON_HORARIO, anio: 2027, mes: 3, servicioId: SERVICIO_60 },
+      ahoraA('08:00'),
+    );
 
     const febrero = contando(env.DB);
-    await disponibilidadDelMes(febrero.d1, { barberoId: CON_HORARIO, anio: 2027, mes: 2 }, ahoraA('08:00'));
+    await disponibilidadDelMes(
+      febrero.d1,
+      { barberoId: CON_HORARIO, anio: 2027, mes: 2, servicioId: SERVICIO_60 },
+      ahoraA('08:00'),
+    );
 
     expect(marzo.queries()).toBe(febrero.queries());
+    expect(marzo.queries()).toBe(5);
+  });
+
+  it('febrero de anio bisiesto tiene 29 dias, y el 29 se evalua', async () => {
+    // 2028 es bisiesto. La ventana de 14 dias se corre para que el 29 entre.
+    const res = await disponibilidadDelMes(
+      env.DB,
+      { barberoId: CON_HORARIO, anio: 2028, mes: 2 },
+      ahoraA('08:00', '2028-02-20'),
+    );
+
+    expect(res.diasDisponibles).toContain('2028-02-29');
+    expect(res.diasDisponibles).not.toContain('2028-03-01');
+    expect(res.diasDisponibles.every((f) => f.startsWith('2028-02-'))).toBe(true);
+  });
+
+  it('febrero de anio NO bisiesto no inventa el 29', async () => {
+    const res = await disponibilidadDelMes(
+      env.DB,
+      { barberoId: CON_HORARIO, anio: 2027, mes: 2 },
+      ahoraA('08:00', '2027-02-20'),
+    );
+
+    expect(res.diasDisponibles).not.toContain('2027-02-29');
+    expect(res.diasDisponibles).toContain('2027-02-28');
   });
 
   it('devuelve solo los dias dentro de la ventana de 14 dias', async () => {
@@ -320,6 +375,96 @@ describe('criterios de aceptacion — mes', () => {
 
       expect(mes.diasDisponibles.includes(fecha)).toBe(delDia.slots.length > 0);
     }
+  });
+});
+
+describe('barbero desactivado', () => {
+  it('no ofrece horarios aunque tenga horario configurado', async () => {
+    await env.DB.prepare('UPDATE barberos SET activo = 0 WHERE id = ?').bind(CON_HORARIO).run();
+
+    try {
+      // El dia y el mes tienen que coincidir: si uno lo oculta y el otro no,
+      // el cliente ve el calendario pintado y la grilla vacia.
+      expect(await slotsDe({})).toEqual([]);
+
+      const mes = await disponibilidadDelMes(
+        env.DB,
+        { barberoId: CON_HORARIO, anio: 2027, mes: 3 },
+        ahoraA('08:00'),
+      );
+      expect(mes.diasDisponibles).toEqual([]);
+    } finally {
+      await env.DB.prepare('UPDATE barberos SET activo = 1 WHERE id = ?').bind(CON_HORARIO).run();
+    }
+  });
+
+  it('reactivarlo devuelve los horarios', async () => {
+    expect((await slotsDe({})).length).toBeGreaterThan(0);
+  });
+});
+
+describe('horario cortado con un servicio largo', () => {
+  const CORTADO = '01930000-0000-7000-8000-0000000000b3';
+  const SERVICIO_90 = '01930000-0000-7000-8000-0000000000c3';
+
+  beforeAll(async () => {
+    await env.DB.prepare("INSERT OR IGNORE INTO barberos (id, slug, nombre) VALUES (?, 'cortado', 'Cortado')")
+      .bind(CORTADO)
+      .run();
+    await env.DB.prepare("INSERT OR IGNORE INTO servicios (id, nombre, duracion_min) VALUES (?, 'Muy largo', 90)")
+      .bind(SERVICIO_90)
+      .run();
+
+    // Bloque largo a la manana (9-13) y uno de UNA hora a la tarde (16-17).
+    for (let dow = 0; dow <= 6; dow++) {
+      await env.DB.batch([
+        env.DB.prepare(
+          'INSERT INTO barbero_horarios (id, barbero_id, dow, hora_inicio, hora_fin) VALUES (?, ?, ?, 9, 13)',
+        ).bind(uuidv7(), CORTADO, dow),
+        env.DB.prepare(
+          'INSERT INTO barbero_horarios (id, barbero_id, dow, hora_inicio, hora_fin) VALUES (?, ?, ?, 16, 17)',
+        ).bind(uuidv7(), CORTADO, dow),
+      ]);
+    }
+  });
+
+  it('un servicio de 60 min entra en la manana y solo una vez en la tarde', async () => {
+    const slots = await slotsDe({ barberoId: CORTADO, servicioId: SERVICIO_60 });
+
+    // Manana: ultimo inicio 12:00 (termina 13:00).
+    expect(slots).toContain('12:00');
+    expect(slots).not.toContain('12:30');
+    // Tarde: el bloque dura exactamente 60 min, asi que solo entra 16:00.
+    expect(slots).toContain('16:00');
+    expect(slots).not.toContain('16:30');
+  });
+
+  it('un servicio de 90 min entra en la manana y en la tarde NO entra nunca', async () => {
+    // Este es el caso que se equivoca en silencio: la grilla de 30 min ofrece
+    // 16:00 y 16:30, y los dos hay que descartarlos porque el bloque de la
+    // tarde es mas corto que el servicio.
+    const slots = await slotsDe({ barberoId: CORTADO, servicioId: SERVICIO_90 });
+
+    expect(slots).toContain('11:30'); // termina 13:00, justo el cierre
+    expect(slots).not.toContain('12:00'); // terminaria 13:30
+    expect(slots.filter((s) => s >= '16:00')).toEqual([]);
+  });
+
+  it('el mismo dia con un servicio de 30 min si ofrece la tarde completa', async () => {
+    const slots = await slotsDe({ barberoId: CORTADO, servicioId: SERVICIO_30 });
+
+    expect(slots).toContain('16:00');
+    expect(slots).toContain('16:30');
+    expect(slots).not.toContain('17:00');
+  });
+
+  it('un servicio que no entra en ningun bloque deja el dia sin slots', async () => {
+    const SERVICIO_300 = uuidv7();
+    await env.DB.prepare("INSERT INTO servicios (id, nombre, duracion_min) VALUES (?, 'Jornada', 300)")
+      .bind(SERVICIO_300)
+      .run();
+
+    expect(await slotsDe({ barberoId: CORTADO, servicioId: SERVICIO_300 })).toEqual([]);
   });
 });
 
