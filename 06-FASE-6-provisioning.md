@@ -24,11 +24,38 @@ Suena a más trabajo que un sistema multi-tenant, pero para esta escala es al re
 
 ### Los límites del free tier
 
-⚠️ **El plan gratuito da 10 bases D1 por cuenta.** O sea: **hasta 10 barberías por cuenta de Cloudflare**.
+⚠️ **El plan gratuito da 10 bases D1 por cuenta, y este límite Cloudflare SÍ lo aplica** — a diferencia del de CPU, que está documentado en 10 ms pero medido en ~1,8 s. No confundir uno con el otro.
 
-No es un problema hoy (tenés una), pero es el techo. Cuando se acerque, las opciones son otra cuenta de Cloudflare, o revisar si el volumen ya justifica pagar. **No lo resuelvas por anticipado** — anotalo y seguí.
+**El techo no son 10 barberías: son 6.** La cuenta ya tiene otras cosas.
 
-Los demás límites (100.000 requests/día, 5 crons) son **por cuenta**, no por Worker. Con 10 barberías de bajo volumen seguís sobrando, pero los 5 Cron Triggers sí se comparten: con 3 crons por instancia, a partir de la segunda barbería no alcanzan. **Ver tarea 6.4.**
+Medido el 2026-08-17 con `wrangler d1 list`:
+
+| Base | De qué es |
+|---|---|
+| `valor-solutions-db` | otro proyecto |
+| `cosmetologa-analia-velazco` | otro proyecto |
+| `finanzas-db` | otro proyecto |
+| `gym-db` | otro proyecto |
+| `barberia` | **esta barbería** |
+
+| | |
+|---|---|
+| Techo del plan Free | 10 |
+| Ocupadas por otros proyectos | 4 |
+| Ocupadas por barberías | 1 |
+| **Libres** | **5** |
+
+O sea: **caben 5 barberías más, 6 en total.** Y el número baja si aparece otro
+proyecto en la misma cuenta — por eso el script cuenta las bases existentes en
+vez de asumir un número.
+
+Cuando se acerque, las opciones son otra cuenta de Cloudflare, o revisar si el
+volumen ya justifica pagar. **No lo resuelvas por anticipado** — anotalo y
+seguí.
+
+Los demás límites (100.000 requests/día, 5 crons) son **por cuenta**, no por Worker. Con 6 barberías de bajo volumen seguís sobrando en requests.
+
+Los 5 Cron Triggers también se comparten, pero **ese ya no aprieta**: el sistema usa **un solo cron horario** con despacho interno por hora, no tres. Con 5 barberías entran justo, y con 6 hace falta el Worker orquestador de la tarea 6.4. Ver `src/index.ts`.
 
 ---
 
@@ -102,7 +129,12 @@ npm run provision -- --slug=nuevabarberia --nombre="Barbería Nueva" \
 
 **La password temporal se muestra una sola vez** y hay que cambiarla al primer login. Generala con CSPRNG, no con algo predecible.
 
-**Ojo con el límite de 10 bases D1.** Antes de crear, contá cuántas hay. Si el alta va a ser la número 10, avisá; si ya hay 10, fallá con un mensaje claro en vez de un error críptico de la API.
+**Ojo con el límite de bases D1.** El script **tiene que contar las bases existentes** antes de crear, con `wrangler d1 list`, y no asumir ningún número: la cuenta comparte el cupo con otros proyectos y ese cupo cambia sin que este repo se entere.
+
+- Si quedan 2 o menos libres → avisar, y seguir.
+- Si quedan 0 → fallar con un mensaje que diga **cuántas hay y cuál es el techo**, en vez de dejar salir el error críptico de la API.
+
+Al momento de escribir esto quedaban 5 libres de 10.
 
 **Criterios de aceptación:**
 
@@ -110,7 +142,8 @@ npm run provision -- --slug=nuevabarberia --nombre="Barbería Nueva" \
 - [ ] Correrlo dos veces con el mismo slug no rompe nada
 - [ ] Si falla a mitad de camino, dice qué se creó y cómo limpiarlo
 - [ ] La password temporal se genera con CSPRNG y se muestra una sola vez
-- [ ] Al llegar a 10 bases D1, avisa antes de fallar
+- [ ] Cuenta las bases D1 existentes antes de crear, no asume un número
+- [ ] Con 2 o menos libres avisa; con 0 falla diciendo cuántas hay y cuál es el techo
 - [ ] Un slug inválido se rechaza antes de crear ningún recurso
 - [ ] El owner puede entrar al panel inmediatamente después
 
@@ -212,7 +245,9 @@ Documentación en `docs/runbook.md`. **No es opcional** — es lo que permite qu
 
 **Diagnóstico.** Qué mirar cuando el cliente dice "no me llegan los WhatsApp", "no aparecen los turnos en el calendario", "no puedo entrar al panel". Los tres son las consultas más frecuentes y los tres tienen causas conocidas.
 
-**Límites y cuándo se acercan.** Los 10 bases D1, los 5 crons, los 10 ms de CPU. Qué hacer al llegar a cada uno.
+**Límites y cuándo se acercan.** Las 10 bases D1 (de las que ya hay 4 tomadas por otros proyectos), los 5 crons, y el de CPU. Qué hacer al llegar a cada uno.
+
+Distinguir los **duros** de los **blandos**: el de bases D1 Cloudflare lo aplica; el de CPU está documentado en 10 ms pero medido en ~1,8 s. Ver `00-CONTEXTO.md`.
 
 **Criterios de aceptación:**
 
@@ -239,7 +274,7 @@ No son problemas de hoy. Están anotados para que nadie se sorprenda:
 
 | Límite | Techo | Qué hacer al llegar |
 |---|---|---|
-| Bases D1 por cuenta | **10 barberías** | Otra cuenta de Cloudflare, o evaluar si el volumen justifica pagar |
+| Bases D1 por cuenta | **6 barberías** (10 del plan − 4 de otros proyectos) | Otra cuenta de Cloudflare, o evaluar si el volumen justifica pagar |
 | Requests por cuenta | 100.000/día compartidos | Con barberías chicas, muy lejos |
 | Cron Triggers | 5 por cuenta | Resuelto con el orquestador (tarea 6.4) |
 
