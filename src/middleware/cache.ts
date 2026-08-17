@@ -15,9 +15,17 @@ import { createMiddleware } from 'hono/factory';
 export const cachear = (segundos: number) =>
   createMiddleware(async (c, next) => {
     await next();
+
     if (c.req.method === 'GET' && c.res.ok) {
       c.res.headers.set('Cache-Control', `public, max-age=${segundos}`);
+      return;
     }
+
+    // Las respuestas de error NO pueden quedar sin Cache-Control: un CDN que
+    // no ve el header aplica su propia heuristica y puede cachear un 404. Si
+    // eso pasa con `/api/negocio` durante un despliegue a medias, la landing
+    // queda rota para todos hasta que expire un TTL que nadie eligio.
+    c.res.headers.set('Cache-Control', 'no-store');
   });
 
 /**

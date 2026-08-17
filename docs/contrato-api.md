@@ -65,8 +65,12 @@ Los códigos `401`, `403`, `409` y `429` están definidos en las convenciones pe
 |---|---|
 | `/negocio`, `/barberos`, `/servicios`, `/promos`, `/catalogo` | `Cache-Control: public, max-age=300` |
 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` | `Cache-Control: no-store` |
+| **Cualquier respuesta de error (4xx, 5xx)** | `Cache-Control: no-store` |
 
 La disponibilidad **no se cachea nunca**: un slot se ocupa en cualquier momento.
+
+Los errores tampoco, aunque vengan de un endpoint cacheable: un CDN que no ve
+el header aplica su propia heurística y podría cachear un 404.
 
 ### Autenticación
 
@@ -323,13 +327,16 @@ del paso de grilla y podés ofrecer horarios que después la reserva rechaza. Co
 - la fecha está más allá de `diasMaxAnticipacion`
 - el barbero no atiende ese día de la semana
 - hay un feriado o cierre en esa fecha
-- el barbero está desactivado
 - el día está lleno
 - el servicio no entra en ningún bloque horario
 
 **No hay forma de distinguir esos casos desde este endpoint.** Si necesitás
 explicarle al cliente *por qué* no hay horarios, el mensaje aparece recién al
 intentar reservar.
+
+Lo que **sí** se distingue: un `barberoId` inexistente o desactivado devuelve
+**400 `Barbero inválido.`**, el mismo mensaje que la reserva. Nunca vas a ver
+una lista vacía por culpa de un ID mal escrito.
 
 **400:**
 
@@ -338,6 +345,7 @@ intentar reservar.
 | `barberoId es obligatorio.` | falta el param |
 | `fecha es obligatoria.` | falta el param |
 | `Formato de fecha inválido.` | no es `YYYY-MM-DD`, o la fecha no existe (`2026-02-30`) |
+| `Barbero inválido.` | el barbero no existe o está desactivado |
 
 ---
 
@@ -383,6 +391,7 @@ se calcula con otra duración y puede pintar días que después no ofrecen nada.
 | `barberoId es obligatorio.` | falta el param |
 | `Año inválido.` | no es entero, o fuera de 2000–2100 |
 | `Mes inválido. Use 1 a 12.` | no es entero, o fuera de 1–12 |
+| `Barbero inválido.` | el barbero no existe o está desactivado |
 
 ---
 
@@ -475,11 +484,21 @@ Todos son **400** con el sobre `{ ok: false, error }`. En orden de evaluación �
 | 4 | `No se puede agendar un turno en un horario que ya pasó.` | es hoy y la hora ya pasó |
 | 5 | `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | no normaliza a un número argentino |
 | 6 | `Barbero inválido.` | no existe o está desactivado |
-| 8a | `La barbería no atiende ese día.` | el barbero no tiene horario ese día de la semana |
-| 8b | `La barbería no atiende esa fecha (feriado o cierre).` | hay un override con `trabaja = false` |
+| 8a | `La barbería no atiende esa fecha (feriado o cierre).` | hay un override con `trabaja = false` |
+| 8b | `La barbería no atiende ese día.` | el barbero no tiene horario ese día de la semana |
 | 8c | `El horario elegido está fuera del horario de atención.` | la hora no entra en ningún bloque, **o el servicio no termina antes del cierre** |
 | 9 | `Debés reservar con al menos {N} minutos de anticipación.` | `{N}` = `minutosAnticipacionMin` |
 | 11 | `Lo sentimos, este turno acaba de ser reservado por alguien más.` | el slot se ocupó |
+
+**El feriado gana sobre el día cerrado.** Un override con `trabaja = false`
+devuelve `La barbería no atiende esa fecha (feriado o cierre).` **incluso si el
+barbero tampoco tiene horario ese día de la semana**: el override negativo se
+evalúa antes que los bloques.
+
+Al revés no funciona: un override con `trabaja = true` **no abre** un día sin
+horario configurado. El override es un booleano, no trae horas — solo puede
+evitar que un `false` cierre el día. Un domingo sin horario sigue devolviendo
+`La barbería no atiende ese día.` aunque tenga un override positivo.
 
 **500:**
 
@@ -522,7 +541,7 @@ carácter por carácter.
 |---|---|---|
 | `Año inválido.` | 400 | `/disponibilidad/mes` |
 | `barberoId es obligatorio.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
-| `Barbero inválido.` | 400 | `POST /reservas` |
+| `Barbero inválido.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
 | `clienteNombre es obligatorio.` | 400 | `POST /reservas` |
 | `clienteTelefono es obligatorio.` | 400 | `POST /reservas` |
 | `Debés reservar con al menos {N} minutos de anticipación.` | 400 | `POST /reservas` |

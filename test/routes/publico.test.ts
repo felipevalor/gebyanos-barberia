@@ -153,6 +153,21 @@ describe('el cache es opt-in, no global', () => {
     expect(res.headers.get('Cache-Control')).toBeNull();
   });
 
+  it('una respuesta de ERROR nunca sale sin Cache-Control', async () => {
+    // Un CDN que no ve el header aplica su propia heuristica y puede cachear
+    // un 404. Si eso pasa con /api/negocio durante un despliegue a medias, la
+    // landing queda rota hasta que expire un TTL que nadie eligio.
+    await env.DB.prepare('DELETE FROM negocio').run();
+
+    try {
+      const res = await get('/api/negocio');
+      expect(res.status).toBe(404);
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+    } finally {
+      await env.DB.prepare('INSERT OR REPLACE INTO negocio (id) VALUES (1)').run();
+    }
+  });
+
   it('las 5 rutas de catalogo declaran su cache una por una', async () => {
     for (const ruta of RUTAS) {
       expect(await (await get(ruta)).headers.get('Cache-Control')).toBe('public, max-age=300');

@@ -102,6 +102,25 @@ export interface DisponibilidadDia {
   duracionMin: number;
 }
 
+/**
+ * True si el barbero existe y esta activo.
+ *
+ * Disponibilidad valida el barbero igual que la reserva: sin esto, un
+ * barberoId mal escrito devuelve `slots: []` con 200, indistinguible de "el
+ * dia esta lleno", y el frontend busca el bug en cualquier otro lado. La
+ * reserva despues lo rechaza con "Barbero inválido.", asi que ademas las dos
+ * respuestas se contradicen.
+ */
+export async function barberoValido(d1: D1Database, barberoId: string): Promise<boolean> {
+  const fila = await db(d1)
+    .select({ id: barberos.id })
+    .from(barberos)
+    .where(and(eq(barberos.id, barberoId), eq(barberos.activo, 1)))
+    .limit(1);
+
+  return fila.length > 0;
+}
+
 export async function disponibilidadDelDia(
   d1: D1Database,
   params: { barberoId: string; fecha: string; servicioId?: string | undefined },

@@ -8,7 +8,11 @@ import {
   listarPromos,
   listarCatalogo,
 } from '../services/publico';
-import { disponibilidadDelDia, disponibilidadDelMes } from '../services/disponibilidad';
+import {
+  disponibilidadDelDia,
+  disponibilidadDelMes,
+  barberoValido,
+} from '../services/disponibilidad';
 import { esFechaValida } from '../domain/dates';
 import { crearReserva, type EntradaReserva } from '../services/reserva';
 
@@ -64,6 +68,12 @@ publicRoutes.get('/disponibilidad', noCachear, async (c) => {
   if (!fecha) return c.json(fail('fecha es obligatoria.'), 400);
   if (!esFechaValida(fecha)) return c.json(fail('Formato de fecha inválido.'), 400);
 
+  // Mismo mensaje y mismo codigo que la reserva: un barberoId mal escrito se
+  // rechaza acá, no devuelve una lista vacia que parece "dia lleno".
+  if (!(await barberoValido(c.env.DB, barberoId))) {
+    return c.json(fail('Barbero inválido.'), 400);
+  }
+
   return c.json(
     ok(
       await disponibilidadDelDia(c.env.DB, {
@@ -109,6 +119,9 @@ publicRoutes.get('/disponibilidad/mes', noCachear, async (c) => {
   }
   if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
     return c.json(fail('Mes inválido. Use 1 a 12.'), 400);
+  }
+  if (!(await barberoValido(c.env.DB, barberoId))) {
+    return c.json(fail('Barbero inválido.'), 400);
   }
 
   return c.json(
