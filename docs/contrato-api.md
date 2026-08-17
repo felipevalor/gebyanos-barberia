@@ -562,6 +562,8 @@ carácter por carácter.
 | `No se pueden importar más de 500 filas por vez.` | 400 | `POST /api/admin/reservas/importar` |
 | `Prohibido` | 403 | import sin ser owner; tocar la reserva de otro |
 | `Reserva no encontrada.` | 404 | `PUT` / `DELETE` de reservas |
+| `Servicio inválido.` | 400 | `PUT /api/admin/reservas/:id` |
+| `Solo podés operar sobre tu propia agenda.` | 403 | endpoints del panel con `barberoId` de otro |
 | `Se esperaba una lista de reservas.` | 400 | `POST /api/admin/reservas/importar` |
 | `Usuario o contraseña incorrectos` | 401 | `POST /api/admin/auth` |
 | `Ya existe una reserva en ese horario.` | 400 | `POST /api/admin/bloqueos` |
@@ -694,12 +696,19 @@ siempre, incluso sin cookie o con la sesión ya vencida.
 | `barbero` | **solo lo suyo**, siempre |
 | `owner` | todo; con `?barberoId=` filtra por ese |
 
-⚠️ **Un `barbero` que manda `?barberoId=` de otro no recibe un error: recibe
-sus propios datos.** El parámetro se ignora. No lo uses para "cambiar de
-barbero" en la UI sin chequear el rol primero, porque no vas a distinguir el
-filtro aplicado del ignorado.
+⚠️ **Un `barbero` que manda `?barberoId=` de otro recibe 403**, no una lista
+filtrada:
 
-Sobre una reserva puntual (editar, cancelar) sí hay error: **403 Prohibido**.
+```json
+{ "ok": false, "error": "Solo podés operar sobre tu propia agenda." }
+```
+
+Vale para `GET /agenda`, `GET /reservas`, `POST /reservas` y `POST /bloqueos`.
+Mandar el **propio** id explícitamente sí es válido.
+
+Si tu UI tiene un selector de barbero, mostralo solo cuando `rol === 'owner'`.
+
+Sobre una reserva puntual (editar, cancelar) el 403 dice `Prohibido`.
 
 ---
 
@@ -777,19 +786,28 @@ Alta desde el panel. Mismo body que `POST /api/reservas`, **sin `barberoId`**
 
 Reprograma. Body `{ fecha, hora, servicioId? }`.
 
-⚠️ **La reserva cambia de `id` y de `cancelToken`.** Internamente se cancela la
-original y se crea una nueva, para que el nuevo horario pase por el mismo
-control de concurrencia que cualquier reserva. Si guardás el `id` en el
-frontend, recargá después de reprogramar.
+**Conserva el `id` y el `cancelToken`.** Es la misma reserva movida de horario,
+no una nueva: los links de autogestión del cliente siguen sirviendo después de
+reprogramar.
+
+Reprogramar al **mismo** horario que ya tiene es válido (no choca consigo
+misma).
+
+Sigue validando fecha real, fecha no pasada y horario de atención, con la
+duración del servicio. **No** valida anticipación, igual que el alta desde el
+panel.
 
 Si el destino está ocupado, **la original queda intacta** y se devuelve 400.
 
 | Error | Código |
 |---|---|
-| `Formato de fecha inválido.` | 400 |
+| `Formato de fecha inválido.` / `Formato de hora inválido. Usá HH:mm.` | 400 |
+| `No se puede agendar un turno en el pasado.` | 400 |
+| `El horario elegido está fuera del horario de atención.` | 400 |
+| `Servicio inválido.` | 400 |
 | `Lo sentimos, este turno acaba de ser reservado por alguien más.` | 400 |
 | `Prohibido` | 403 |
-| `Reserva no encontrada.` | 404 |
+| `Reserva no encontrada.` — inexistente, de otro barbero, o ya cancelada | 404 |
 
 ## `DELETE /api/admin/reservas/:id`
 

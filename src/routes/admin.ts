@@ -13,9 +13,13 @@ import {
   ERROR_CREDENCIALES,
   ERROR_NO_AUTORIZADO,
   ERROR_PROHIBIDO,
-  type SesionActiva,
 } from '../services/auth';
-import { resolverBarbero, listarAgenda, listarReservas } from '../services/agenda';
+import {
+  resolverBarbero,
+  listarAgenda,
+  listarReservas,
+  ERROR_AGENDA_AJENA,
+} from '../services/agenda';
 import {
   cancelarReserva,
   reprogramarReserva,
@@ -130,10 +134,10 @@ adminRoutes.get('/me', requiereAuth, async (c) => {
  * devuelve el barbero objetivo ya decidido, y para un `barbero` ese valor es
  * SIEMPRE el suyo, mande lo que mande en la query.
  */
-const objetivo = (c: { get: (k: 'sesion') => SesionActiva; req: { query: (k: string) => string | undefined } }) =>
-  resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
-
 adminRoutes.get('/agenda', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
   const desde = c.req.query('desde');
   const hasta = c.req.query('hasta');
 
@@ -144,12 +148,15 @@ adminRoutes.get('/agenda', requiereAuth, async (c) => {
   }
 
   return c.json(
-    ok(await listarAgenda(c.env, { barberoId: objetivo(c), desde, hasta })),
+    ok(await listarAgenda(c.env, { barberoId: objetivo.barberoId, desde, hasta })),
     200,
   );
 });
 
 adminRoutes.get('/reservas', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
   const numero = (v: string | undefined) => (v === undefined ? undefined : Number(v));
   const skip = numero(c.req.query('skip'));
   const limit = numero(c.req.query('limit'));
@@ -161,7 +168,7 @@ adminRoutes.get('/reservas', requiereAuth, async (c) => {
     return c.json(fail('limit inválido.'), 400);
   }
 
-  return c.json(ok(await listarReservas(c.env, { barberoId: objetivo(c), skip, limit })), 200);
+  return c.json(ok(await listarReservas(c.env, { barberoId: objetivo.barberoId, skip, limit })), 200);
 });
 
 // ============================================================== ESCRITURAS
@@ -178,12 +185,9 @@ adminRoutes.post('/reservas', requiereAuth, async (c) => {
     return c.json(fail('Formato de solicitud inválido.'), 400);
   }
 
-  const sesion = c.get('sesion');
-  // Un barbero solo puede cargar turnos en SU agenda.
-  const barberoId =
-    sesion.rol === 'owner'
-      ? ((cuerpo as { barberoId?: string }).barberoId ?? sesion.barberoId)
-      : sesion.barberoId;
+  const objetivo = resolverBarbero(c.get('sesion'), (cuerpo as { barberoId?: string }).barberoId);
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
 
   const resultado = await crearReserva(c.env, cuerpo as EntradaReserva, {
     modo: 'admin',
@@ -264,11 +268,9 @@ adminRoutes.post('/bloqueos', requiereAuth, async (c) => {
   if (!fecha || !esFechaValida(fecha)) return c.json(fail('Formato de fecha inválido.'), 400);
   if (!hora || !esHoraValida(hora)) return c.json(fail('Formato de hora inválido. Usá HH:mm.'), 400);
 
-  const sesion = c.get('sesion');
-  const barberoId =
-    sesion.rol === 'owner'
-      ? ((cuerpo as { barberoId?: string }).barberoId ?? sesion.barberoId)
-      : sesion.barberoId;
+  const objetivo = resolverBarbero(c.get('sesion'), (cuerpo as { barberoId?: string }).barberoId);
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
 
   const r = await crearBloqueo(c.env, barberoId, {
     fecha,

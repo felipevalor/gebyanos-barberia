@@ -1,8 +1,10 @@
 import { and, eq } from 'drizzle-orm';
 import { db } from '../db/client';
-import { reservas } from '../db/schema';
+import { barberoHorarios, feriadosOverride, reservas } from '../db/schema';
 import { crearReserva, type EntradaReserva, type ResultadoReserva } from './reserva';
-import { buscarReserva } from './agenda';
+import { buscarReserva, buscarServicio } from './agenda';
+import { evaluarSlot, mensajeCliente, combinarOverrides } from '../domain/schedule';
+import { esFechaValida, esHoraValida, diaDeLaSemana, todayArgentina } from '../domain/dates';
 import { MENSAJE_OVERLAP } from '../do/BarberoAgenda';
 import type { Rol } from './auth';
 
@@ -75,13 +77,13 @@ export type ResultadoEdicion =
 /**
  * Mueve una reserva de fecha y hora.
  *
- * ⚠️ Se cancela la vieja y se crea una nueva EN VEZ de un UPDATE, y no es
- * capricho: un UPDATE de `fecha`/`hora` no pasa por el Durable Object, asi que
- * dos reprogramaciones simultaneas al mismo slot entrarian las dos. El indice
- * unico las atajaria solo si coinciden exacto; un solapamiento parcial no.
+ * CONSERVA `id` y `cancel_token`. Es un UPDATE que pasa por el Durable Object,
+ * no un cancelar-y-recrear: los magic links de la Fase 5 apuntan al id del
+ * turno, asi que recrearlo dejaria al cliente con un link hacia un turno
+ * cancelado justo despues de haber reprogramado bien.
  *
- * Como efecto, el turno reprogramado tiene id y cancel_token nuevos, y el
- * viejo queda en el historial con estado 'cancelada'.
+ * Valida lo mismo que un alta desde el panel — fecha real, no pasada, dentro
+ * del horario de atencion — pero NO la anticipacion, igual que el alta.
  */
 export async function reprogramarReserva(
   env: Env,
@@ -90,57 +92,107 @@ export async function reprogramarReserva(
   cambios: { fecha: string; hora: string; servicioId?: string },
   ahora: Date = new Date(),
 ): Promise<ResultadoEdicion> {
+  if (!esFechaValida(cambios.fecha)) {
+    return { estado: 'datosInvalidos', error: 'Formato de fecha inválido.' };
+  }
+  if (!esHoraValida(cambios.hora)) {
+    return { estado: 'datosInvalidos', error: 'Formato de hora inválido. Usá HH:mm.' };
+  }
+
   const reserva = await buscarReserva(env, id);
   if (!reserva) return { estado: 'noEncontrada' };
   if (!puedeTocar(sesion, reserva)) return { estado: 'prohibido' };
+  if (reserva.estado !== 'activa') return { estado: 'noEncontrada' };
 
-  const original = await db(env.DB)
+  const cliente = db(env.DB);
+  const filas = await cliente
     .select({
       barberoId: reservas.barberoId,
       servicioId: reservas.servicioId,
-      nombre: reservas.nombre,
-      telefono: reservas.telefono,
-      mensaje: reservas.mensaje,
+      servicio: reservas.servicio,
+      duracionMin: reservas.duracionMin,
     })
     .from(reservas)
     .where(eq(reservas.id, id))
     .limit(1);
 
-  const vieja = original[0];
-  if (!vieja || !vieja.barberoId) return { estado: 'noEncontrada' };
+  const actual = filas[0];
+  if (!actual?.barberoId) return { estado: 'noEncontrada' };
+  const barberoId = actual.barberoId;
 
-  // Se libera el slot viejo ANTES de pedir el nuevo: si no, mover un turno de
-  // las 10:00 a las 10:00 del mismo dia chocaria consigo mismo.
-  await db(env.DB)
-    .update(reservas)
-    .set({ estado: 'cancelada', canceladaAt: ahora.toISOString() })
-    .where(eq(reservas.id, id));
-
-  const entrada: EntradaReserva = {
-    barberoId: vieja.barberoId,
-    servicioId: cambios.servicioId ?? vieja.servicioId ?? '',
-    fecha: cambios.fecha,
-    hora: cambios.hora,
-    clienteNombre: vieja.nombre,
-    clienteTelefono: vieja.telefono,
-    mensaje: vieja.mensaje ?? '',
-  };
-
-  const creada = await crearReserva(env, entrada, { ahora, modo: 'admin' });
-
-  if (creada.estado !== 'exito') {
-    // Revertir: la reserva original vuelve a estar activa.
-    await db(env.DB)
-      .update(reservas)
-      .set({ estado: 'activa', canceladaAt: null })
-      .where(eq(reservas.id, id));
-
-    return creada.estado === 'overlap'
-      ? { estado: 'overlap', error: creada.error }
-      : { estado: 'datosInvalidos', error: creada.error };
+  if (cambios.fecha < todayArgentina(ahora)) {
+    return { estado: 'datosInvalidos', error: 'No se puede agendar un turno en el pasado.' };
   }
 
-  return { estado: 'exito' };
+  // Si cambia de servicio, se recalcula duracion y nombre; si no, se conservan.
+  let duracionMin = actual.duracionMin;
+  let servicioNuevo: { id: string; nombre: string } | null = null;
+
+  if (cambios.servicioId && cambios.servicioId !== actual.servicioId) {
+    const servicio = await buscarServicio(env, cambios.servicioId);
+    if (!servicio) {
+      return { estado: 'datosInvalidos', error: 'Servicio inválido.' };
+    }
+    duracionMin = servicio.duracionMin;
+    servicioNuevo = { id: cambios.servicioId, nombre: servicio.nombre };
+  }
+
+  // El horario de atencion sigue aplicando, con la duracion del servicio.
+  const dow = diaDeLaSemana(cambios.fecha);
+  const [bloques, overrides] = await Promise.all([
+    cliente
+      .select({ inicio: barberoHorarios.horaInicio, fin: barberoHorarios.horaFin })
+      .from(barberoHorarios)
+      .where(
+        and(
+          eq(barberoHorarios.barberoId, barberoId),
+          eq(barberoHorarios.dow, dow),
+          eq(barberoHorarios.activo, 1),
+        ),
+      ),
+    cliente
+      .select({ trabaja: feriadosOverride.trabaja })
+      .from(feriadosOverride)
+      .where(
+        and(
+          eq(feriadosOverride.barberoId, barberoId),
+          eq(feriadosOverride.fecha, cambios.fecha),
+        ),
+      ),
+  ]);
+
+  const disponible = evaluarSlot(
+    bloques,
+    combinarOverrides(overrides.map((o) => ({ trabaja: o.trabaja === 1 }))),
+    cambios.hora,
+    duracionMin,
+  );
+  if (disponible !== 'abierto') {
+    return { estado: 'datosInvalidos', error: mensajeCliente(disponible) };
+  }
+
+  const agenda = env.BARBERO_AGENDA.get(env.BARBERO_AGENDA.idFromName(barberoId));
+  const r = await agenda.reprogramar({
+    reservaId: id,
+    barberoId,
+    fecha: cambios.fecha,
+    hora: cambios.hora,
+    duracionMin,
+    ...(servicioNuevo
+      ? { servicioId: servicioNuevo.id, servicio: servicioNuevo.nombre }
+      : {}),
+  });
+
+  switch (r.estado) {
+    case 'exito':
+      return { estado: 'exito' };
+    case 'overlap':
+      return { estado: 'overlap', error: MENSAJE_OVERLAP };
+    case 'noEncontrada':
+      return { estado: 'noEncontrada' };
+    default:
+      throw new Error(r.detalle);
+  }
 }
 
 // ---------------------------------------------------------------- bloqueos

@@ -55,13 +55,19 @@ Razones completas en [`notas-operacion.md`](./notas-operacion.md).
 
 ---
 
-## Tarea 2.4 — un mensaje de error inventado
+## Mensajes de error inventados
 
-`Teléfono inválido. Ingresá un número argentino de 10 dígitos.`
+Strings que **no** son transcripción de la spec, porque la spec no define uno
+para ese caso. Si aparece un texto de producción, reemplazarlos.
 
-Es el **único** string de error de este endpoint que no es transcripción
-textual de la spec: la spec lista el paso 5 como "Normalizar teléfono" sin
-mensaje de rechazo. Si hay un texto de producción para este caso, reemplazarlo.
+| Mensaje | Dónde |
+|---|---|
+| `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | paso 5 de la reserva |
+| `Solo podés operar sobre tu propia agenda.` | 403 del scoping del panel |
+| `Servicio inválido.` | reprogramar con un `servicioId` que no existe |
+| `Formato de fecha inválido en desde.` / `en hasta.` | `GET /api/admin/agenda` |
+| `skip inválido.` / `limit inválido.` | `GET /api/admin/reservas` |
+| `Se esperaba una lista de reservas.` | import |
 
 ---
 

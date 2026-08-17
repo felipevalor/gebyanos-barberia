@@ -123,14 +123,29 @@ describe('scoping por rol', () => {
     await sembrarReserva({ barberoId: BARBERO_B, hora: '11:00', nombre: 'De Beto' });
   });
 
-  it('un barbero que pasa ?barberoId= de OTRO sigue viendo solo lo suyo', async () => {
+  it('un barbero que pasa ?barberoId= de OTRO recibe 403, no sus propios datos', async () => {
+    // Devolverle lo suyo en silencio seria mas discreto y peor: un frontend
+    // con un bug no se enteraria nunca.
     const res = await pedir(`/api/admin/agenda?barberoId=${BARBERO_B}`, { cookie: cookieA });
+
+    expect(res.status).toBe(403);
+    expect((await cuerpoDe(res)).error).toBe('Solo podés operar sobre tu propia agenda.');
+  });
+
+  it('un barbero que pasa SU PROPIO id explicitamente si puede', async () => {
+    const res = await pedir(`/api/admin/agenda?barberoId=${BARBERO_A}`, { cookie: cookieA });
     const { data } = await cuerpoDe(res);
 
     expect(res.status).toBe(200);
     expect(data).toHaveLength(1);
     expect(data[0].nombre).toBe('De Ana');
-    expect(data.map((t: any) => t.barberoId)).not.toContain(BARBERO_B);
+  });
+
+  it('un barbero SIN ?barberoId= ve lo suyo', async () => {
+    const { data } = await cuerpoDe(await pedir('/api/admin/agenda', { cookie: cookieA }));
+
+    expect(data).toHaveLength(1);
+    expect(data[0].nombre).toBe('De Ana');
   });
 
   it('un owner SIN ?barberoId= ve las reservas de todos', async () => {
@@ -150,9 +165,11 @@ describe('scoping por rol', () => {
   });
 
   it('el listado de reservas tiene el mismo scoping', async () => {
-    const deAna = await cuerpoDe(
-      await pedir(`/api/admin/reservas?barberoId=${BARBERO_B}`, { cookie: cookieA }),
-    );
+    expect(
+      (await pedir(`/api/admin/reservas?barberoId=${BARBERO_B}`, { cookie: cookieA })).status,
+    ).toBe(403);
+
+    const deAna = await cuerpoDe(await pedir('/api/admin/reservas', { cookie: cookieA }));
     expect(deAna.data.items).toHaveLength(1);
     expect(deAna.data.items[0].nombre).toBe('De Ana');
 
@@ -166,12 +183,13 @@ describe('scoping por rol', () => {
     }
   });
 
-  it('el scoping es simetrico: Beto tampoco ve lo de Ana', async () => {
+  it('el scoping es simetrico: Beto tampoco puede pedir lo de Ana', async () => {
     // Que Ana no vea lo de Beto podria ser casualidad del orden de los datos.
-    const { data } = await cuerpoDe(
-      await pedir(`/api/admin/agenda?barberoId=${BARBERO_A}`, { cookie: cookieB }),
-    );
+    expect(
+      (await pedir(`/api/admin/agenda?barberoId=${BARBERO_A}`, { cookie: cookieB })).status,
+    ).toBe(403);
 
+    const { data } = await cuerpoDe(await pedir('/api/admin/agenda', { cookie: cookieB }));
     expect(data).toHaveLength(1);
     expect(data[0].nombre).toBe('De Beto');
   });
@@ -373,15 +391,27 @@ describe('crear reserva desde el panel', () => {
     expect((await cuerpoDe(res)).error).toBe('Lo sentimos, este turno acaba de ser reservado por alguien más.');
   });
 
-  it('un barbero no puede cargar un turno en la agenda de otro', async () => {
-    await pedir('/api/admin/reservas', {
+  it('un barbero que carga un turno en la agenda de otro recibe 403', async () => {
+    const res = await pedir('/api/admin/reservas', {
       metodo: 'POST',
       cookie: cookieA,
       cuerpo: { ...nueva(), barberoId: BARBERO_B },
     });
 
-    const fila = await env.DB.prepare('SELECT barbero_id FROM reservas').first<{ barbero_id: string }>();
-    expect(fila?.barbero_id).toBe(BARBERO_A);
+    expect(res.status).toBe(403);
+    // Y no se creo nada.
+    const fila = await env.DB.prepare('SELECT COUNT(*) AS n FROM reservas').first<{ n: number }>();
+    expect(fila?.n).toBe(0);
+  });
+
+  it('lo mismo para los bloqueos', async () => {
+    const res = await pedir('/api/admin/bloqueos', {
+      metodo: 'POST',
+      cookie: cookieA,
+      cuerpo: { fecha: MANANA, hora: '15:00', barberoId: BARBERO_B },
+    });
+
+    expect(res.status).toBe(403);
   });
 });
 
@@ -403,6 +433,107 @@ describe('reprogramar', () => {
     );
     expect(data.slots).toContain('10:00');
     expect(data.slots).not.toContain('12:00');
+  });
+
+  it('CONSERVA el id y el cancel_token: los magic links siguen sirviendo', async () => {
+    // Es la razon de que sea un UPDATE y no un cancelar-y-recrear. En la Fase 5
+    // los magic links apuntan al id del turno: si cambiara, el cliente que
+    // reprograma y refresca veria un turno cancelado.
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00' });
+    await env.DB.prepare("UPDATE reservas SET cancel_token = 'token-de-prueba' WHERE id = ?")
+      .bind(id)
+      .run();
+
+    expect(
+      (await pedir(`/api/admin/reservas/${id}`, {
+        metodo: 'PUT',
+        cookie: cookieA,
+        cuerpo: { fecha: MANANA, hora: '12:00' },
+      })).status,
+    ).toBe(200);
+
+    const fila = await env.DB.prepare(
+      'SELECT id, cancel_token, hora, estado FROM reservas WHERE id = ?',
+    )
+      .bind(id)
+      .first<{ id: string; cancel_token: string; hora: string; estado: string }>();
+
+    expect(fila?.id).toBe(id);
+    expect(fila?.cancel_token).toBe('token-de-prueba');
+    expect(fila?.hora).toBe('12:00');
+    expect(fila?.estado).toBe('activa');
+
+    // Y NO quedo una fila cancelada de sobra.
+    const total = await env.DB.prepare('SELECT COUNT(*) AS n FROM reservas').first<{ n: number }>();
+    expect(total?.n).toBe(1);
+  });
+
+  it('reprogramar al MISMO horario que ya tiene no choca consigo misma', async () => {
+    // Sin excluir la propia reserva del chequeo de solapamiento, esto daria
+    // overlap contra si misma.
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00' });
+
+    const res = await pedir(`/api/admin/reservas/${id}`, {
+      metodo: 'PUT',
+      cookie: cookieA,
+      cuerpo: { fecha: MANANA, hora: '10:00' },
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('mover 30 minutos, solapando con su propia franja anterior, tampoco choca', async () => {
+    // El turno de 10:00 dura 30 min. Moverlo a 10:15 no puede chocar con el
+    // hueco que el mismo esta liberando.
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00' });
+
+    const res = await pedir(`/api/admin/reservas/${id}`, {
+      metodo: 'PUT',
+      cookie: cookieA,
+      cuerpo: { fecha: MANANA, hora: '10:15' },
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('sigue validando el horario de atencion', async () => {
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00' });
+
+    const res = await pedir(`/api/admin/reservas/${id}`, {
+      metodo: 'PUT',
+      cookie: cookieA,
+      cuerpo: { fecha: MANANA, hora: '23:00' },
+    });
+
+    expect(res.status).toBe(400);
+    expect((await cuerpoDe(res)).error).toBe(
+      'El horario elegido está fuera del horario de atención.',
+    );
+  });
+
+  it('rechaza mover al pasado', async () => {
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00' });
+
+    const res = await pedir(`/api/admin/reservas/${id}`, {
+      metodo: 'PUT',
+      cookie: cookieA,
+      cuerpo: { fecha: '2020-01-01', hora: '10:00' },
+    });
+
+    expect(res.status).toBe(400);
+    expect((await cuerpoDe(res)).error).toBe('No se puede agendar un turno en el pasado.');
+  });
+
+  it('una reserva ya cancelada no se puede reprogramar', async () => {
+    const id = await sembrarReserva({ barberoId: BARBERO_A, hora: '10:00', estado: 'cancelada' });
+
+    const res = await pedir(`/api/admin/reservas/${id}`, {
+      metodo: 'PUT',
+      cookie: cookieA,
+      cuerpo: { fecha: MANANA, hora: '12:00' },
+    });
+
+    expect(res.status).toBe(404);
   });
 
   it('si el destino esta ocupado, la original queda intacta', async () => {

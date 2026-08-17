@@ -66,6 +66,24 @@ export interface ReservaInput {
   upsertCliente?: { nombre: string; telefono: string } | undefined;
 }
 
+export interface ReprogramarInput {
+  /** La reserva que se mueve. Sigue siendo la misma fila: conserva id y cancel_token. */
+  reservaId: string;
+  barberoId: string;
+  fecha: string;
+  hora: string;
+  duracionMin: number;
+  /** Si cambia de servicio. Si no viene, se conservan los del turno. */
+  servicioId?: string | null;
+  servicio?: string | undefined;
+}
+
+export type ReprogramarResult =
+  | { estado: 'exito' }
+  | { estado: 'overlap'; conflicto: string | null }
+  | { estado: 'noEncontrada' }
+  | { estado: 'error'; detalle: string };
+
 export type ReservaResult =
   | { estado: 'exito'; reservaId: string; cancelToken: string; clienteId: string | null }
   | { estado: 'overlap'; conflicto: string | null }
@@ -129,17 +147,107 @@ export class BarberoAgenda extends DurableObject<Env> {
     return resultado;
   }
 
-  /** Turnos activos del barbero ese dia. Solo `estado = 'activa'`. */
-  async #reservasActivas(barberoId: string, fecha: string): Promise<TurnoExistente[]> {
+  /**
+   * Turnos activos del barbero ese dia. Solo `estado = 'activa'`.
+   *
+   * `excluirId` saca del calculo la reserva que se esta moviendo: sin eso, un
+   * turno reprogramado al mismo horario que ya tiene choca CONSIGO MISMO.
+   */
+  async #reservasActivas(
+    barberoId: string,
+    fecha: string,
+    excluirId?: string,
+  ): Promise<TurnoExistente[]> {
     const { results } = await this.env.DB.prepare(
       `SELECT hora, duracion_min FROM reservas
-       WHERE barbero_id = ? AND fecha = ? AND estado = 'activa'
+       WHERE barbero_id = ? AND fecha = ? AND estado = 'activa' AND id IS NOT ?
        ORDER BY hora`,
     )
-      .bind(barberoId, fecha)
+      .bind(barberoId, fecha, excluirId ?? null)
       .all<{ hora: string; duracion_min: number }>();
 
     return results.map((r) => ({ hora: r.hora, duracionMin: r.duracion_min }));
+  }
+
+  /**
+   * Mueve una reserva de fecha y hora CONSERVANDO su identidad.
+   *
+   * ⚠️ POR QUE ES UN UPDATE Y NO UN CANCELAR-Y-RECREAR
+   *
+   * Recrear cambiaria el `id` y el `cancel_token`, y los magic links de la
+   * Fase 5 apuntan al id: despues de reprogramar, el link del cliente quedaria
+   * apuntando a un turno cancelado. Refrescar la pagina mostraria "turno
+   * cancelado" a alguien que acaba de reprogramar bien.
+   *
+   * Y POR QUE PASA POR EL DO
+   *
+   * Un UPDATE suelto de fecha/hora no pasa por ningun punto de serializacion,
+   * asi que dos reprogramaciones simultaneas al mismo slot entrarian las dos.
+   * El indice unico solo las atajaria si coinciden exacto — un solapamiento
+   * parcial no lo ve. Acá el leer-decidir-escribir va adentro de
+   * `blockConcurrencyWhile`, igual que el alta.
+   *
+   * Una reprogramacion NUNCA cambia de barbero, asi que siempre es el mismo
+   * DO: no hay dos instancias que coordinar.
+   */
+  async reprogramar(input: ReprogramarInput): Promise<ReprogramarResult> {
+    let resultado: ReprogramarResult = {
+      estado: 'error',
+      detalle: 'La operación no produjo resultado.',
+    };
+
+    await this.ctx.blockConcurrencyWhile(async () => {
+      try {
+        resultado = await this.#reprogramarSerializado(input);
+      } catch (e) {
+        resultado = esColisionDeSlot(e)
+          ? { estado: 'overlap', conflicto: input.hora }
+          : { estado: 'error', detalle: e instanceof Error ? e.message : String(e) };
+      }
+    });
+
+    return resultado;
+  }
+
+  async #reprogramarSerializado(input: ReprogramarInput): Promise<ReprogramarResult> {
+    const existentes = await this.#reservasActivas(
+      input.barberoId,
+      input.fecha,
+      input.reservaId,
+    );
+
+    const { overlap, conflicto } = checkOverlap(input.hora, input.duracionMin, existentes);
+    if (overlap) return { estado: 'overlap', conflicto };
+
+    try {
+      const r = await this.env.DB.prepare(
+        `UPDATE reservas
+            SET fecha = ?, hora = ?, duracion_min = ?,
+                servicio_id = COALESCE(?, servicio_id),
+                servicio    = COALESCE(?, servicio)
+          WHERE id = ? AND barbero_id = ? AND estado = 'activa'`,
+      )
+        .bind(
+          input.fecha,
+          input.hora,
+          input.duracionMin,
+          input.servicioId ?? null,
+          input.servicio ?? null,
+          input.reservaId,
+          input.barberoId,
+        )
+        .run();
+
+      // Sin filas afectadas: o no existe, o es de otro barbero, o ya se cancelo.
+      if (!r.meta.changes) return { estado: 'noEncontrada' };
+    } catch (e) {
+      // Segunda capa: el indice unico parcial ataja un UPDATE hacia un slot
+      // ocupado igual que ataja un INSERT.
+      if (esColisionDeSlot(e)) return { estado: 'overlap', conflicto: input.hora };
+      throw e;
+    }
+
+    return { estado: 'exito' };
   }
 
   /**

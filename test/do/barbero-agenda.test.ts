@@ -244,3 +244,106 @@ describe('mapeo del error de constraint de D1', () => {
     expect(await activasEnLaBase()).toBe(1);
   });
 });
+
+/**
+ * Reprogramar tiene el mismo invariante que el alta: dos turnos no pueden
+ * terminar en el mismo slot.
+ *
+ * Es la razon de que el UPDATE pase por el DO en vez de ir suelto a D1. Un
+ * UPDATE directo no se serializa contra nada.
+ */
+describe('concurrencia al reprogramar', () => {
+  async function sembrarActivas(horas: string[]): Promise<string[]> {
+    const ids: string[] = [];
+    for (const hora of horas) {
+      const r = await agenda().reservar(input({ hora }));
+      if (r.estado === 'exito') ids.push(r.reservaId);
+    }
+    return ids;
+  }
+
+  it('10 reprogramaciones simultaneas al MISMO slot: gana exactamente una', async () => {
+    const horas = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30'];
+    const ids = await sembrarActivas(horas);
+    expect(ids).toHaveLength(10);
+
+    const stub = agenda();
+    const resultados = await Promise.all(
+      ids.map((reservaId) =>
+        stub.reprogramar({
+          reservaId,
+          barberoId: BARBERO,
+          fecha: FECHA,
+          hora: '18:00',
+          duracionMin: 30,
+        }),
+      ),
+    );
+
+    expect(resultados.filter((r) => r.estado === 'exito')).toHaveLength(1);
+    expect(resultados.filter((r) => r.estado === 'error')).toEqual([]);
+
+    const fila = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM reservas WHERE barbero_id = ? AND fecha = ? AND hora = '18:00' AND estado = 'activa'",
+    )
+      .bind(BARBERO, FECHA)
+      .first<{ n: number }>();
+    expect(fila?.n).toBe(1);
+  });
+
+  it('reprogramaciones a slots DISTINTOS entran todas', async () => {
+    // Contra-prueba: serializar no puede rechazar de mas.
+    const ids = await sembrarActivas(['09:00', '09:30', '10:00']);
+    const stub = agenda();
+    const destinos = ['16:00', '16:30', '17:00'];
+
+    const resultados = await Promise.all(
+      ids.map((reservaId, i) =>
+        stub.reprogramar({
+          reservaId,
+          barberoId: BARBERO,
+          fecha: FECHA,
+          hora: destinos[i]!,
+          duracionMin: 30,
+        }),
+      ),
+    );
+
+    expect(resultados.every((r) => r.estado === 'exito')).toBe(true);
+    expect(await activasEnLaBase()).toBe(3);
+  });
+
+  it('un solapamiento PARCIAL al reprogramar tambien se ataja', async () => {
+    // 60 min desde las 16:00 contra 30 min desde las 16:30: no comparten
+    // (fecha, hora), asi que el indice unico no los ve.
+    const ids = await sembrarActivas(['09:00', '09:30']);
+    const stub = agenda();
+
+    const resultados = await Promise.all([
+      stub.reprogramar({ reservaId: ids[0]!, barberoId: BARBERO, fecha: FECHA, hora: '16:00', duracionMin: 60 }),
+      stub.reprogramar({ reservaId: ids[1]!, barberoId: BARBERO, fecha: FECHA, hora: '16:30', duracionMin: 30 }),
+    ]);
+
+    expect(resultados.filter((r) => r.estado === 'exito')).toHaveLength(1);
+    expect(resultados.filter((r) => r.estado === 'overlap')).toHaveLength(1);
+  });
+
+  it('reprogramar una reserva de OTRO barbero no hace nada', async () => {
+    const ids = await sembrarActivas(['09:00']);
+    const otro = env.BARBERO_AGENDA.get(env.BARBERO_AGENDA.idFromName('otro-barbero'));
+
+    const r = await otro.reprogramar({
+      reservaId: ids[0]!,
+      barberoId: 'otro-barbero',
+      fecha: FECHA,
+      hora: '18:00',
+      duracionMin: 30,
+    });
+
+    expect(r.estado).toBe('noEncontrada');
+    const fila = await env.DB.prepare('SELECT hora FROM reservas WHERE id = ?')
+      .bind(ids[0])
+      .first<{ hora: string }>();
+    expect(fila?.hora).toBe('09:00');
+  });
+});

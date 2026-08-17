@@ -19,19 +19,41 @@ export const LIMITE_AGENDA = 500;
 export const LIMITE_LISTADO = 50;
 export const LIMITE_LISTADO_MAX = 200;
 
+/** Mensaje del 403 cuando un barbero pide operar sobre otro. */
+export const ERROR_AGENDA_AJENA = 'Solo podés operar sobre tu propia agenda.';
+
+export type ObjetivoBarbero =
+  | { ok: true; barberoId: string | null }
+  | { ok: false };
+
 /**
  * Barbero sobre el que opera el request.
  *
- * - `barbero`: SIEMPRE el suyo. Un `?barberoId=` de otro se ignora en vez de
- *   dar error: filtrar es más seguro que confiar en que el handler chequee.
  * - `owner`: el que pida, o `null` = todos.
+ * - `barbero`: solo el suyo. Pedir el de OTRO da 403, no una lista filtrada.
+ *
+ * Devolver los datos propios en silencio seria mas discreto, pero peor: un
+ * barbero que manda el id de otro es o un bug del frontend o un intento de
+ * escalar privilegios, y en los dos casos decirselo se diagnostica antes. No
+ * filtra nada — ya sabe que es barbero y cual es su id.
+ *
+ * Pedir el PROPIO id explicitamente si es valido.
+ *
+ * La red defensiva sigue: cuando devuelve ok, para un `barbero` el valor es
+ * siempre el suyo, asi que un parametro que se colara igual no cambia nada.
  */
 export function resolverBarbero(
   sesion: { barberoId: string; rol: Rol },
   pedido: string | undefined,
-): string | null {
-  if (sesion.rol !== 'owner') return sesion.barberoId;
-  return pedido && pedido.trim() ? pedido.trim() : null;
+): ObjetivoBarbero {
+  const pedidoLimpio = pedido?.trim();
+
+  if (sesion.rol === 'owner') {
+    return { ok: true, barberoId: pedidoLimpio || null };
+  }
+
+  if (pedidoLimpio && pedidoLimpio !== sesion.barberoId) return { ok: false };
+  return { ok: true, barberoId: sesion.barberoId };
 }
 
 export interface TurnoDelPanel {

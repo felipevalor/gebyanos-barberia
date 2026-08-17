@@ -310,13 +310,13 @@ describe('estas lecturas NO pasan por el Durable Object', () => {
     }
   });
 
-  it('el DO expone solo escrituras: su unico metodo publico es reservar', () => {
+  it('el DO expone solo ESCRITURAS: nada de lecturas publicas', () => {
     // Los metodos privados (#) no aparecen acá. Si alguien agrega una lectura
     // publica al DO, este test se rompe y hay que justificarla.
-    const metodos = Object.getOwnPropertyNames(BarberoAgenda.prototype).filter(
-      (m) => m !== 'constructor',
-    );
+    const metodos = Object.getOwnPropertyNames(BarberoAgenda.prototype)
+      .filter((m) => m !== 'constructor')
+      .sort();
 
-    expect(metodos).toEqual(['reservar']);
+    expect(metodos).toEqual(['reprogramar', 'reservar']);
   });
 });
