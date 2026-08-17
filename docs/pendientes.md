@@ -55,6 +55,51 @@ Razones completas en [`notas-operacion.md`](./notas-operacion.md).
 
 ---
 
+## Tarea 5.2 — el warning de recurrentes no está implementado
+
+El patrón Bloquear+Avisar tiene dos casos que **avisan pero NO bloquean**:
+borrar y desactivar un cliente recurrente que ya tiene turnos futuros
+generados. Devuelven **200 con `warning`**, no 409, porque esos turnos son
+compromisos con clientes reales y borrar la regla de recurrencia no debería
+cancelarlos.
+
+**El mensaje ya está definido** en `src/services/conflictos.ts`
+(`mensajeRecurrenteConTurnos`) y el sobre de la API ya soporta `warning`. Lo
+que falta es el cableado, y vive en la **tarea 5.2** — los endpoints de
+recurrentes no existen todavía.
+
+```json
+{
+  "ok": true,
+  "data": { "turnosFuturosCount": 2, "turnosFuturos": [...] },
+  "warning": "El recurrente fue eliminado pero quedan 2 turno(s) futuro(s) agendado(s) que no se cancelaron automáticamente."
+}
+```
+
+---
+
+## Casos borde de baja prioridad — tareas 3.1 y 3.2
+
+Los tres son conocidos y quedaron sin resolver a propósito. Ninguno corrompe
+datos.
+
+**1. Dos bloques del mismo día que se solapan entre sí no se rechazan.**
+`PUT /horarios/dia/:dow` acepta `[{9,13}, {12,15}]` sin decir nada.
+`generateSlotsFromBlocks` deduplica aguas abajo, así que la grilla sale bien —
+pero el admin no se entera de que cargó algo sin sentido. Lo correcto sería
+rechazarlo, o al menos devolver un `warning`.
+
+**2. Un feriado para una fecha pasada se acepta.** No rompe nada: los turnos
+pasados no se consultan y `evaluarSlot` solo mira el futuro. Es ruido en la
+tabla.
+
+**3. `PUT /horarios/:id` devuelve 404 antes de chequear pertenencia.** Un
+barbero puede distinguir "existe y no es tuyo" (403) de "no existe" (404). Con
+UUID v7 no adivinables el riesgo es mínimo; el orden correcto sería 404
+después del chequeo de pertenencia, o 404 para los dos casos.
+
+---
+
 ## Mensajes de error inventados
 
 Strings que **no** son transcripción de la spec, porque la spec no define uno

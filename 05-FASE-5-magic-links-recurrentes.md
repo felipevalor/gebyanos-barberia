@@ -156,9 +156,21 @@ Notificar por WhatsApp con `Tu turno recurrente ha sido cargado.`
 
 Enriquecelo con el próximo y el último turno **reales** (derivados de `reservas`), no solo con `ultimo_turno_fecha`. Es lo que el operador necesita ver para entender el estado de cada cliente.
 
-### Borrado y desactivación
+### Borrado y desactivación — el warning no bloqueante
 
-Aplican los warnings no bloqueantes de la Fase 3 (tarea 3.2): si quedan turnos futuros ya generados, devolver 200 con el warning y la lista.
+⏭️ **Este es el caso que la tarea 3.2 dejó pendiente:** el mensaje y el patrón se definieron ahí, pero el cableado HTTP vive acá porque los endpoints de recurrentes son de esta fase.
+
+Si al borrar o desactivar un recurrente quedan **turnos futuros ya generados**, la operación **se hace igual** y devuelve **200 con warning**, no 409:
+
+```json
+{
+  "ok": true,
+  "data": { "turnosFuturosCount": 2, "turnosFuturos": [...] },
+  "warning": "El recurrente fue eliminado pero quedan 2 turno(s) futuro(s) agendado(s) que no se cancelaron automáticamente."
+}
+```
+
+**Por qué no bloquea:** esos turnos son compromisos con clientes reales. Borrar la regla de recurrencia no debería cancelarlos. El dueño decide qué hacer con ellos.
 
 **Criterios de aceptación:**
 

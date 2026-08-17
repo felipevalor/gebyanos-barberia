@@ -105,6 +105,8 @@ Es el más delicado: `reservas.barbero_id` es `SET NULL` (para preservar histori
 
 ### Casos que avisan pero NO bloquean
 
+⏭️ **Estos dos se implementan en la tarea 5.2**, junto con el CRUD de recurrentes. Acá van solo el mensaje y el patrón; el cableado HTTP no existe hasta esa tarea. (Estaban listados en esta fase por error mío — los endpoints de recurrentes son de la Fase 5.)
+
 Devuelven **200 con warning**, no 409:
 
 - Borrar un recurrente que tiene turnos futuros ya generados
@@ -129,7 +131,7 @@ Devuelven **200 con warning**, no 409:
 - [ ] Una reserva cancelada NO cuenta como conflicto
 - [ ] Un turno pasado NO cuenta como conflicto
 - [ ] Borrar un barbero con recurrentes avisa de los recurrentes en el mensaje
-- [ ] Borrar un recurrente con turnos futuros devuelve 200 con warning, no 409
+- [ ] ⏭️ *(tarea 5.2)* Borrar un recurrente con turnos futuros devuelve 200 con warning, no 409
 
 ---
 

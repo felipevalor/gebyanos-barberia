@@ -44,6 +44,10 @@ export const requiereAuth = createMiddleware<{
 /**
  * Exige rol `owner`. Va DESPUES de `requiereAuth`.
  *
+ * Todavia sin usar: el unico endpoint de owner que existe hoy — el import de
+ * la 2.7 — tiene un mensaje propio definido por la spec, mas util que este
+ * `Prohibido` generico. Los endpoints de la 3.4 sí lo usan.
+ *
  * 🐛 El sistema viejo devuelve 401 en los chequeos de "solo owner", que es
  * incorrecto: el usuario esta autenticado, lo que le falta es permiso. Va 403.
  */

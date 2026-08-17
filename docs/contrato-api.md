@@ -1,13 +1,16 @@
 # Contrato de API — Barbería Gebyanos
 
-**Generado leyendo el código real** (tareas 2.1 a 2.4), no la spec. Si algo acá
-no coincide con el comportamiento, es un bug de este documento.
+**Generado leyendo el código real**, no la spec. Si algo acá no coincide con el
+comportamiento, es un bug de este documento.
 
-Estado: **Fase 2 completa** — endpoints públicos, autenticación y panel de
-agenda y reservas. La configuración (Fase 3) y la autogestión del cliente
-(`/api/mi-turno/*`, Fase 5) todavía no existen.
+Estado: **Fase 2 completa + tareas 3.1 y 3.2** — endpoints públicos,
+autenticación, panel de agenda y reservas, horarios, feriados y el patrón
+Bloquear+Avisar.
 
-Última actualización: 2026-08-17 · Fase 2 cerrada
+Todavía no existen: clientes (3.3), catálogos y configuración (3.4), y la
+autogestión del cliente (`/api/mi-turno/*`, Fase 5).
+
+Última actualización: 2026-08-17 · tareas 3.1 y 3.2
 
 ---
 
@@ -23,6 +26,26 @@ agenda y reservas. La configuración (Fase 3) y la autogestión del cliente
 - [`GET /api/disponibilidad`](#get-apidisponibilidad)
 - [`GET /api/disponibilidad/mes`](#get-apidisponibilidadmes)
 - [`POST /api/reservas`](#post-apireservas)
+
+**Panel de administración**
+
+- [Autenticación](#autenticación)
+- [El scoping por rol](#el-scoping-por-rol)
+- [`GET /api/admin/agenda`](#get-apiadminagenda)
+- [`GET /api/admin/reservas`](#get-apiadminreservas)
+- [`POST /api/admin/reservas`](#post-apiadminreservas)
+- [`PUT /api/admin/reservas/:id`](#put-apiadminreservasid)
+- [`DELETE /api/admin/reservas/:id`](#delete-apiadminreservasid)
+- [`POST /api/admin/reservas/importar`](#post-apiadminreservasimportar)
+- [**Bloquear + Avisar — el 409 con lista**](#bloquear--avisar--el-409-con-lista)
+- [`GET /api/admin/horarios`](#get-apiadminhorarios)
+- [`PUT /api/admin/horarios/dia/:dow`](#put-apiadminhorariosdiadow)
+- [`PUT /api/admin/horarios/:id`](#put-apiadminhorariosid)
+- [`GET /api/admin/feriados`](#get-apiadminferiados)
+- [`POST /api/admin/feriados`](#post-apiadminferiados)
+- [`DELETE /api/admin/feriados/:id`](#delete-apiadminferiadosid)
+- [`POST /api/admin/bloqueos`](#post-apiadminbloqueos)
+
 - [Todos los mensajes de error](#todos-los-mensajes-de-error)
 - [Flujo completo de reserva](#flujo-completo-de-reserva)
 - [Lo que todavía no existe](#lo-que-todavía-no-existe)
@@ -37,11 +60,24 @@ agenda y reservas. La configuración (Fase 3) y la autogestión del cliente
 
 ```ts
 type ApiResponse<T> =
-  | { ok: true;  data: T }
-  | { ok: false; error: string };
+  | { ok: true;  data: T;        warning?: string }
+  | { ok: false; error: string;  data?: unknown };
 ```
 
-No hay respuestas sin sobre. No hay campos extra en el nivel superior.
+No hay respuestas sin sobre.
+
+**Los dos campos opcionales son del patrón Bloquear+Avisar.** No están siempre;
+se omiten cuando no aplican, así que un error común sigue siendo exactamente
+`{ ok: false, error }`.
+
+| Campo | Cuándo aparece | Qué trae |
+|---|---|---|
+| `data` en un **error** | solo en los **409** de Bloquear+Avisar | la lista de turnos en conflicto |
+| `warning` en un **éxito** | la operación se hizo, pero algo quedó pendiente de atención humana | el texto para mostrarle al usuario |
+
+⚠️ **Si tratás todo error como `{ ok, error }` y nada más, te vas a perder la
+lista de conflictos** — que es justamente lo que le permite al dueño resolver
+el 409. Ver [Bloquear + Avisar](#bloquear--avisar--el-409-con-lista).
 
 ### Códigos de estado
 
@@ -49,7 +85,9 @@ No hay respuestas sin sobre. No hay campos extra en el nivel superior.
 |---|---|
 | `200` | OK |
 | `400` | Validación, regla de negocio, o el turno se ocupó |
-| `404` | Ruta inexistente, o `negocio` sin configurar |
+| `403` | Autenticado pero sin permiso |
+| `404` | Ruta inexistente, recurso inexistente, o `negocio` sin configurar |
+| `409` | **Bloquear+Avisar**: el cambio dejaría turnos huérfanos. Trae la lista en `data` |
 | `429` | Rate limit excedido |
 | `500` | Error no controlado |
 
@@ -57,7 +95,9 @@ No hay respuestas sin sobre. No hay campos extra en el nivel superior.
 tres estados de error de la reserva (`datosInvalidos`, `noDisponible`,
 `overlap`) colapsan en 400 y se distinguen **solo por el texto de `error`**.
 
-El `409` está definido en las convenciones pero ningún endpoint lo emite hoy.
+**El 409 solo lo emiten las operaciones de configuración**, nunca la reserva:
+un slot ocupado es 400, un cambio de horario que rompería turnos es 409. La
+diferencia importa porque el 409 **siempre trae `data`** y el 400 no.
 
 ### Caché
 
@@ -554,25 +594,32 @@ carácter por carácter.
 | Mensaje | Código | Endpoint |
 |---|---|---|
 | `Año inválido.` | 400 | `/disponibilidad/mes` |
+| `Año inválido. Usá un año entre 2000 y 2100.` | 400 | `GET /api/admin/feriados` |
 | `barberoId es obligatorio.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
 | `Barbero inválido.` | 400 | `/disponibilidad`, `/disponibilidad/mes`, `POST /reservas` |
+| `Bloque de horario no encontrado.` | 404 | `PUT /api/admin/horarios/:id` |
+| `Día de la semana inválido. Usá 0 (domingo) a 6 (sábado).` | 400 | `PUT /api/admin/horarios/dia/:dow` |
 | `Formato de fecha inválido en desde. Usá YYYY-MM-DD.` | 400 | `GET /api/admin/agenda` |
 | `limit inválido. Tiene que ser un número entre 1 y 200.` | 400 | `GET /api/admin/reservas` |
 | `skip inválido. Tiene que ser un número entero mayor o igual a 0.` | 400 | `GET /api/admin/reservas` |
 | `No autorizado` | 401 | todo `/api/admin/*` autenticado |
+| **`No se puede borrar: el barbero tiene {n} turno(s) futuro(s). Reasignalos o cancelalos antes de borrarlo.`** | **409** | borrar barbero *(3.4)* |
+| **`No se puede desactivar: el barbero tiene {n} turno(s) futuro(s). Reagendalos o cancelalos antes de desactivarlo.`** | **409** | desactivar barbero *(3.4)* |
 | `No se pueden importar más de 500 filas por vez.` | 400 | `POST /api/admin/reservas/importar` |
 | `Prohibido` | 403 | import sin ser owner; tocar la reserva de otro |
 | `Reserva no encontrada.` | 404 | `PUT` / `DELETE` de reservas |
 | `Servicio inválido.` | 400 | `PUT /api/admin/reservas/:id` |
 | `Solo podés operar sobre tu propia agenda.` | 403 | endpoints del panel con `barberoId` de otro |
+| `Se esperaba una lista de bloques.` | 400 | `PUT /api/admin/horarios/dia/:dow` |
 | `Se esperaba una lista de reservas.` | 400 | `POST /api/admin/reservas/importar` |
+| `Solo los dueños pueden importar reservas.` | 403 | `POST /api/admin/reservas/importar` |
 | `Usuario o contraseña incorrectos` | 401 | `POST /api/admin/auth` |
 | `Ya existe una reserva en ese horario.` | 400 | `POST /api/admin/bloqueos` |
 | `Demasiados intentos. Intentá más tarde.` | 429 | `POST /reservas`, `POST /api/admin/auth` |
 | `clienteNombre es obligatorio.` | 400 | `POST /reservas` |
 | `clienteTelefono es obligatorio.` | 400 | `POST /reservas` |
 | `Debés reservar con al menos {N} minutos de anticipación.` | 400 | `POST /reservas` |
-| `El horario elegido está fuera del horario de atención.` | 400 | `POST /reservas` |
+| `El horario elegido está fuera del horario de atención.` | 400 | `POST /reservas`, `PUT /api/admin/reservas/:id` |
 | `El mensaje no puede superar los 500 caracteres.` | 400 | `POST /reservas` |
 | `El nombre no puede superar los 100 caracteres.` | 400 | `POST /reservas` |
 | `El teléfono no puede superar los 20 caracteres.` | 400 | `POST /reservas` |
@@ -580,7 +627,12 @@ carácter por carácter.
 | `fecha es obligatoria.` | 400 | `/disponibilidad`, `POST /reservas` |
 | `Formato de fecha inválido.` | 400 | `/disponibilidad`, `POST /reservas` |
 | `Formato de hora inválido. Usá HH:mm.` | 400 | `POST /reservas` |
-| `Formato de solicitud inválido.` | 400 | `POST /reservas` |
+| `Feriado no encontrado.` | 404 | `DELETE /api/admin/feriados/:id` |
+| `Formato de solicitud inválido.` | 400 | `POST /reservas`, varios del panel |
+| **`Hay {n} turno(s) ese día. Reagendalos o cancelalos antes de marcarlo como cerrado.`** | **409** | `POST /api/admin/feriados` al cerrar |
+| **`Hay {n} turno(s) que quedarían fuera del nuevo horario. Reagendalos o cancelalos antes de cambiar el horario.`** | **409** | `PUT /api/admin/horarios/dia/:dow`, `PUT /api/admin/horarios/:id` |
+| `Horario inválido. La hora de fin tiene que ser mayor que la de inicio, y las dos entre 0 y 24.` | 400 | endpoints de horarios |
+| `La fila no es un objeto.` | — | motivo por fila en el import; no es una respuesta HTTP |
 | `La barbería no atiende esa fecha (feriado o cierre).` | 400 | `POST /reservas` |
 | `La barbería no atiende ese día.` | 400 | `POST /reservas` |
 | `Lo sentimos, este turno acaba de ser reservado por alguien más.` | 400 | `POST /reservas` |
@@ -592,9 +644,17 @@ carácter por carácter.
 | `Revisá el teléfono. Tiene que ser un número argentino válido con código de área.` | 400 | `POST /reservas` |
 | `servicioId es obligatorio.` | 400 | `POST /reservas` |
 | `Solo se puede reservar con hasta {N} días de anticipación.` | 400 | `POST /reservas` |
+| `trabaja es obligatorio y tiene que ser true o false.` | 400 | `POST /api/admin/feriados` |
 
-Dos mensajes existen en el código pero **hoy son inalcanzables**:
-`Formato de hora inválido.` (sin el "Usá HH:mm.") y `Turno no disponible.`
+Los `{n}` y `{N}` vienen interpolados con el número real, no con la llave.
+
+Tres mensajes existen en el código pero **hoy son inalcanzables**:
+`Formato de hora inválido.` (sin el "Usá HH:mm."), `Turno no disponible.` y
+`La operación no produjo resultado.`
+
+Y hay mensajes ya definidos cuyos endpoints todavía no existen: los de
+recurrentes (Fase 5) y `La contraseña tiene que tener al menos 12 caracteres.`
+(alta de barberos, 3.4).
 
 ---
 

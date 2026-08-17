@@ -574,7 +574,8 @@ describe('import masivo', () => {
     });
 
     expect(res.status).toBe(403);
-    expect((await cuerpoDe(res)).error).toBe('Prohibido');
+    // Mensaje propio, no el `Prohibido` generico: dice QUE hace falta.
+    expect((await cuerpoDe(res)).error).toBe('Solo los dueños pueden importar reservas.');
   });
 
   it('501 filas se rechazan', async () => {

@@ -109,22 +109,43 @@ beforeEach(async () => {
 // =========================================================== 3.1 horarios
 
 describe('horario inicial de un barbero nuevo', () => {
-  it('se siembra lunes a sabado 9-20, con domingo SIN bloques', async () => {
+  it('siembra los SIETE dias, con domingo inactivo pero con horas', async () => {
     await env.DB.prepare('DELETE FROM barbero_horarios').run();
     expect(await sembrarHorarioInicial(env, BARBERO)).toBe(true);
 
     const bloques = await listarHorarios(env, BARBERO);
-    expect(bloques.map((b) => b.dow)).toEqual([1, 2, 3, 4, 5, 6]);
-    for (const b of bloques) {
+    expect(bloques.map((b) => b.dow)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+
+    const domingo = bloques.find((b) => b.dow === 0)!;
+    expect(domingo.activo).toBe(0);
+    // La fila inactiva LLEVA las horas: prender el domingo no arranca vacio.
+    expect(domingo.horaInicio).toBe(9);
+    expect(domingo.horaFin).toBe(20);
+
+    for (const b of bloques.filter((x) => x.dow !== 0)) {
+      expect(b.activo).toBe(1);
       expect(b.horaInicio).toBe(9);
       expect(b.horaFin).toBe(20);
-      expect(b.activo).toBe(1);
     }
+  });
+
+  it('el domingo inactivo NO ofrece turnos', async () => {
+    // Una fila inactiva no cubre nada: es lo mismo que no tener fila.
+    const domingo = (() => {
+      let f = FUTURO;
+      while (diaDeLaSemana(f) !== 0) f = addDays(f, 1);
+      return f;
+    })();
+
+    const { data } = await cuerpoDe(
+      await pedir(`/api/disponibilidad?barberoId=${BARBERO}&fecha=${domingo}`),
+    );
+    expect(data.slots).toEqual([]);
   });
 
   it('es idempotente: no duplica si ya tiene horarios', async () => {
     expect(await sembrarHorarioInicial(env, BARBERO)).toBe(false);
-    expect(await listarHorarios(env, BARBERO)).toHaveLength(6);
+    expect(await listarHorarios(env, BARBERO)).toHaveLength(7);
   });
 
   it('⚠️ un barbero SIN horarios queda CERRADO, no abierto 24/7', async () => {

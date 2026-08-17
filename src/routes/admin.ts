@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import { ok, fail } from '../api';
 import { sinCache } from '../middleware/cache';
-import { requiereAuth, requiereOwner, type VariablesAuth } from '../middleware/auth';
+import { requiereAuth, type VariablesAuth } from '../middleware/auth';
 import { limitarFallosPorIp, type VariablesRateLimit } from '../middleware/rate-limit';
 import {
   login,
@@ -27,6 +27,7 @@ import {
   crearBloqueo,
   importarReservas,
   MAX_FILAS_IMPORT,
+  ERROR_SOLO_OWNER_IMPORT,
   ERROR_SLOT_OCUPADO,
   ERROR_RESERVA_NO_ENCONTRADA,
   ERROR_LOTE_DEMASIADO_GRANDE,
@@ -266,8 +267,17 @@ adminRoutes.delete('/reservas/:id', requiereAuth, async (c) => {
   return c.json(ok(null), 200);
 });
 
-/** Import masivo. `requiereOwner` va DESPUES de `requiereAuth`. */
-adminRoutes.post('/reservas/importar', requiereAuth, requiereOwner, async (c) => {
+/**
+ * Import masivo. Solo `owner`.
+ *
+ * No usa `requiereOwner`: la spec define un mensaje propio para este caso, mas
+ * util que el `Prohibido` generico porque dice QUE hace falta.
+ */
+adminRoutes.post('/reservas/importar', requiereAuth, async (c) => {
+  if (c.get('sesion').rol !== 'owner') {
+    return c.json(fail(ERROR_SOLO_OWNER_IMPORT), 403);
+  }
+
   const cuerpo = await c.req.json().catch(() => null);
   const filas = Array.isArray(cuerpo)
     ? cuerpo

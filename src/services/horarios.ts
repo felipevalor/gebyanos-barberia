@@ -11,9 +11,22 @@ import type { Bloque } from '../domain/slots';
  * ENTEROS (9, 20), no strings "HH:mm".
  */
 
-/** Horario que se siembra al crear un barbero: lunes a sabado, 9 a 20. */
+/** Horario que se siembra al crear un barbero: 9 a 20. */
 export const HORARIO_INICIAL = { horaInicio: 9, horaFin: 20 };
+
+/**
+ * Se siembran los SIETE dias, con domingo `activo = 0`.
+ *
+ * Funcionalmente da igual que omitir el domingo — sin bloques activos el dia
+ * esta cerrado de las dos formas. La diferencia es de usabilidad:
+ *
+ *   - una fila inactiva YA LLEVA las horas, asi que prender el domingo desde
+ *     el panel deja 9 a 20 en vez de un formulario vacio;
+ *   - el frontend renderiza los siete dias que recibe, en vez de sintetizar
+ *     los que faltan para dibujar la semana completa.
+ */
 export const DIAS_LABORABLES = [1, 2, 3, 4, 5, 6];
+export const DIA_INACTIVO_INICIAL = 0;
 
 export interface BloqueHorario {
   id: string;
@@ -157,8 +170,8 @@ export async function editarBloque(
 }
 
 /**
- * Siembra el horario inicial de un barbero: lunes a sabado de 9 a 20, domingo
- * sin bloques.
+ * Siembra el horario inicial de un barbero: los siete dias de 9 a 20, con el
+ * domingo inactivo.
  *
  * ⚠️ POR QUE ESTO EXISTE, Y POR QUE `evaluarSlot` NO SE TOCA
  *
@@ -180,13 +193,19 @@ export async function sembrarHorarioInicial(env: Env, barberoId: string): Promis
   const existentes = await listarHorarios(env, barberoId);
   if (existentes.length > 0) return false;
 
-  await env.DB.batch(
-    DIAS_LABORABLES.map((dow) =>
-      env.DB.prepare(
-        'INSERT INTO barbero_horarios (id, barbero_id, dow, activo, hora_inicio, hora_fin) VALUES (?, ?, ?, 1, ?, ?)',
-      ).bind(uuidv7(), barberoId, dow, HORARIO_INICIAL.horaInicio, HORARIO_INICIAL.horaFin),
+  const filas = [0, 1, 2, 3, 4, 5, 6].map((dow) =>
+    env.DB.prepare(
+      'INSERT INTO barbero_horarios (id, barbero_id, dow, activo, hora_inicio, hora_fin) VALUES (?, ?, ?, ?, ?, ?)',
+    ).bind(
+      uuidv7(),
+      barberoId,
+      dow,
+      dow === DIA_INACTIVO_INICIAL ? 0 : 1,
+      HORARIO_INICIAL.horaInicio,
+      HORARIO_INICIAL.horaFin,
     ),
   );
 
+  await env.DB.batch(filas);
   return true;
 }
