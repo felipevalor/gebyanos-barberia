@@ -53,6 +53,22 @@ import {
   ERROR_FERIADO_NO_ENCONTRADO,
 } from '../services/feriados';
 import { chequearCambioDeHorario, chequearCierreDeFecha } from '../services/conflictos';
+import {
+  listarClientes,
+  clientesParaExportar,
+  buscarCliente,
+  historialDeCliente,
+  crearCliente,
+  importarClientes,
+  clientesACsv,
+  LIMITE_LISTADO as LIMITE_LISTADO_CLIENTES,
+  MAX_FILAS_IMPORT_CLIENTES,
+  ERROR_CLIENTE_NO_ENCONTRADO,
+  ERROR_SOLO_OWNER_CLIENTES,
+  ERROR_SOLO_OWNER_IMPORT_CLIENTES,
+  ERROR_LOTE_CLIENTES,
+} from '../services/clientes';
+import { todayArgentina } from '../domain/dates';
 
 
 /**
@@ -473,6 +489,100 @@ adminRoutes.delete('/feriados/:id', requiereAuth, async (c) => {
 
   await borrarOverride(c.env, override.id);
   return c.json(ok(null), 200);
+});
+
+// ========================================================= CLIENTES (3.3)
+
+adminRoutes.get('/clientes', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  const num = (v: string | undefined) => (v === undefined ? undefined : Number(v));
+  const skip = num(c.req.query('skip'));
+  const limit = num(c.req.query('limit'));
+
+  if (skip !== undefined && (!Number.isFinite(skip) || skip < 0)) {
+    return c.json(fail('skip inválido. Tiene que ser un número entero mayor o igual a 0.'), 400);
+  }
+  if (limit !== undefined && (!Number.isFinite(limit) || limit < 1 || limit > LIMITE_LISTADO_CLIENTES)) {
+    return c.json(
+      fail(`limit inválido. Tiene que ser un número entre 1 y ${LIMITE_LISTADO_CLIENTES}.`),
+      400,
+    );
+  }
+
+  return c.json(ok(await listarClientes(c.env, { barberoId: objetivo.barberoId, skip, limit })), 200);
+});
+
+/**
+ * Export CSV. Va ANTES de `/clientes/:id` — si no, Hono matchearia "exportar"
+ * como un id.
+ */
+adminRoutes.get('/clientes/exportar', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  const lista = await clientesParaExportar(c.env, objetivo.barberoId);
+  const hoy = todayArgentina();
+
+  return new Response(clientesACsv(lista), {
+    status: 200,
+    headers: {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="clientes-${hoy}.csv"`,
+      'cache-control': 'no-store',
+    },
+  });
+});
+
+adminRoutes.get('/clientes/:id/historial', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  const cliente = await buscarCliente(c.env, c.req.param('id'), objetivo.barberoId);
+  if (!cliente) return c.json(fail(ERROR_CLIENTE_NO_ENCONTRADO), 404);
+
+  const num = (v: string | undefined) => (v === undefined ? undefined : Number(v));
+
+  return c.json(
+    ok(
+      await historialDeCliente(c.env, cliente.id, {
+        barberoId: objetivo.barberoId,
+        skip: num(c.req.query('skip')),
+        limit: num(c.req.query('limit')),
+      }),
+    ),
+    200,
+  );
+});
+
+adminRoutes.post('/clientes', requiereAuth, async (c) => {
+  if (c.get('sesion').rol !== 'owner') {
+    return c.json(fail(ERROR_SOLO_OWNER_CLIENTES), 403);
+  }
+
+  const cuerpo = await c.req.json().catch(() => null);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const r = await crearCliente(c.env, cuerpo as Record<string, unknown>);
+  if (r.estado === 'exito') return c.json(ok(r.cliente), 200);
+  return c.json(fail(r.error), 400);
+});
+
+adminRoutes.post('/clientes/importar', requiereAuth, async (c) => {
+  if (c.get('sesion').rol !== 'owner') {
+    return c.json(fail(ERROR_SOLO_OWNER_IMPORT_CLIENTES), 403);
+  }
+
+  const cuerpo = await c.req.json().catch(() => null);
+  const filas = Array.isArray(cuerpo) ? cuerpo : (cuerpo as { filas?: unknown[] } | null)?.filas;
+
+  if (!Array.isArray(filas)) return c.json(fail('Se esperaba una lista de clientes.'), 400);
+  if (filas.length > MAX_FILAS_IMPORT_CLIENTES) return c.json(fail(ERROR_LOTE_CLIENTES), 400);
+
+  return c.json(ok(await importarClientes(c.env, filas)), 200);
 });
 
 export { DURACION_SESION_MS };

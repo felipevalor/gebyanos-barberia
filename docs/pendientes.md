@@ -55,6 +55,45 @@ Razones completas en [`notas-operacion.md`](./notas-operacion.md).
 
 ---
 
+## 🚀 ANTES DEL LANZAMIENTO — cargar el horario real de Gebyanos
+
+**Producción tiene hoy un horario PLACEHOLDER: lunes a sábado, 9 a 20 corrido.**
+Lo sembró `scripts/backfill-horarios.mjs` porque `gaby` no tenía ninguno y el
+sistema no ofrecía un solo turno.
+
+Eso significa que **la API está ofreciendo turnos a las 14:00**. Ninguna
+barbería que cierre al mediodía va a honrar ese turno, y el cliente se entera
+el día que llega y no hay nadie.
+
+**Hay que preguntarle al dueño y cargarlo desde el panel** —
+`PUT /api/admin/horarios/dia/:dow`. Lo que hay que preguntar:
+
+- ¿a qué hora abre y a qué hora cierra?
+- ¿corta al mediodía? Si sí, entre qué horas
+- ¿el horario es igual todos los días, o el sábado es distinto?
+- ¿trabaja los domingos? (hoy está inactivo)
+
+**No inventar el horario.** Un placeholder que nadie corrigió es peor que un
+día cerrado: el día cerrado se ve en el panel, el turno fantasma no.
+
+---
+
+## Desarrollo y producción tienen FORMAS distintas de horario
+
+| Entorno | Forma |
+|---|---|
+| Seed de desarrollo | cortado: 9-13 y 16-20 |
+| Producción (backfill) | continuo: 9-20 |
+
+Los dos son válidos según lo escrito, pero **un bug que solo aparezca con un
+bloque continuo no lo agarraría el seed**, y al revés.
+
+Mitigado con tests que corren las mismas afirmaciones contra las dos formas
+(`test/domain/disponibilidad.test.ts` → "las dos formas de horario"). Cuando se
+cargue el horario real, revisar que la forma elegida siga cubierta.
+
+---
+
 ## Tarea 5.2 — el warning de recurrentes no está implementado
 
 El patrón Bloquear+Avisar tiene dos casos que **avisan pero NO bloquean**:

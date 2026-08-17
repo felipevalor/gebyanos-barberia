@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { checkOverlap, type TurnoExistente } from '../domain/slots';
 import { uuidv7 } from '../db/id';
+import { esViolacionDeUnico, esViolacionDeUnicoEn } from '../db/errores';
 
 /**
  * Serializa las escrituras de reservas de UN barbero.
@@ -94,30 +95,18 @@ export const MENSAJE_OVERLAP =
   'Lo sentimos, este turno acaba de ser reservado por alguien más.';
 
 /**
- * True si el error de D1 es una violacion de indice unico.
- *
- * Sirve para los dos unicos que defienden este flujo: el del slot
- * (barbero_id, fecha, hora) y el del telefono del cliente.
- *
- * El texto exacto varia segun la capa (`D1_ERROR:` desde el Worker,
- * ` [code: 7500]` desde wrangler --remote). Lo estable es el nucleo.
- * Ver docs/spike-indice-unico-parcial.md.
- */
-export function esViolacionDeUnico(e: unknown): boolean {
-  return e instanceof Error && e.message.includes('UNIQUE constraint failed');
-}
-
-/**
  * Especifico del indice del SLOT.
  *
  * Existen dos unicos en este flujo — `reservas(barbero_id, fecha, hora)` y
  * `clientes(telefono)` — y solo el primero significa "el turno se ocupo". Sin
  * esta distincion, un choque de telefono se le reportaria al cliente como
  * "este turno acaba de ser reservado por alguien más", que es mentira.
+ *
+ * El texto exacto varia segun la capa (`D1_ERROR:` desde el Worker,
+ * ` [code: 7500]` desde wrangler --remote) y Drizzle ademas lo envuelve.
+ * Ver src/db/errores.ts y docs/spike-indice-unico-parcial.md.
  */
-export function esColisionDeSlot(e: unknown): boolean {
-  return esViolacionDeUnico(e) && (e as Error).message.includes('reservas.');
-}
+export const esColisionDeSlot = (e: unknown): boolean => esViolacionDeUnicoEn(e, 'reservas');
 
 export class BarberoAgenda extends DurableObject<Env> {
   /**

@@ -181,3 +181,77 @@ describe('tieneDisponibilidad', () => {
     expect(tieneDisponibilidad(entrada({ overrideTrabaja: false }))).toBe(false);
   });
 });
+
+/**
+ * Las dos formas de horario que existen en el sistema.
+ *
+ * El seed de desarrollo usa horario CORTADO (9-13 y 16-20) y produccion, por
+ * ahora, un bloque CONTINUO (9-20). Los dos son validos, pero si los tests solo
+ * ejercitaran uno, un bug de la otra forma no lo agarraria nadie hasta que un
+ * cliente reserve.
+ *
+ * Estos tests corren las mismas afirmaciones contra las dos.
+ */
+describe('las dos formas de horario', () => {
+  const formas = [
+    { nombre: 'continuo (produccion)', bloques: [{ inicio: 9, fin: 20 }] },
+    {
+      nombre: 'cortado (seed de desarrollo)',
+      bloques: [
+        { inicio: 9, fin: 13 },
+        { inicio: 16, fin: 20 },
+      ],
+    },
+  ];
+
+  for (const { nombre, bloques } of formas) {
+    describe(nombre, () => {
+      it('abre a las 09:00 y el ultimo slot de 30 min es 19:30', () => {
+        const slots = slotsDisponibles(entrada({ bloques }));
+
+        expect(slots[0]).toBe('09:00');
+        expect(slots[slots.length - 1]).toBe('19:30');
+        expect(slots).not.toContain('20:00');
+      });
+
+      it('un turno existente tapa su slot y ninguno mas', () => {
+        const slots = slotsDisponibles(
+          entrada({ bloques, reservas: [{ hora: '10:00', duracionMin: 30 }] }),
+        );
+
+        expect(slots).not.toContain('10:00');
+        expect(slots).toContain('09:30');
+        expect(slots).toContain('10:30');
+      });
+
+      it('un servicio de 60 min no se ofrece pegado al cierre', () => {
+        const slots = slotsDisponibles(entrada({ bloques, duracionServicioMin: 60 }));
+
+        expect(slots).toContain('19:00');
+        expect(slots).not.toContain('19:30');
+      });
+
+      it('el feriado cierra el dia entero', () => {
+        expect(slotsDisponibles(entrada({ bloques, overrideTrabaja: false }))).toEqual([]);
+      });
+
+      it('la anticipacion se aplica igual', () => {
+        const slots = slotsDisponibles(
+          entrada({ bloques, fecha: HOY, ahoraMs: slotAMs(HOY, '10:10') }),
+        );
+        expect(slots[0]).toBe('11:00');
+      });
+    });
+  }
+
+  it('la UNICA diferencia entre las dos es el hueco del mediodia', () => {
+    const continuo = slotsDisponibles(entrada({ bloques: formas[0]!.bloques }));
+    const cortado = slotsDisponibles(entrada({ bloques: formas[1]!.bloques }));
+
+    const soloEnContinuo = continuo.filter((s) => !cortado.includes(s));
+
+    // 13:00 a 15:30 inclusive: seis slots de 30 minutos.
+    expect(soloEnContinuo).toEqual(['13:00', '13:30', '14:00', '14:30', '15:00', '15:30']);
+    expect(cortado.filter((s) => !continuo.includes(s))).toEqual([]);
+  });
+});

@@ -80,10 +80,13 @@ describe('el limite exacto', () => {
     expect((await rl.chequear(LIMITE_POR_VENTANA, VENTANA_MS, T0)).permitido).toBe(false);
   });
 
-  it('chequear no consume: mil chequeos no agotan nada', async () => {
+  it('chequear no consume: repetirlo muchas veces no agota nada', async () => {
+    // 50 y no 1000: son llamadas RPC secuenciales al DO, y con mil el test se
+    // pasaba de los 5 s de timeout cuando la maquina estaba cargada. Un test
+    // lento termina siendo un test flaky, y cincuenta prueban lo mismo.
     const rl = nuevo();
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 50; i++) {
       expect((await rl.chequear(LIMITE_POR_VENTANA, VENTANA_MS, T0)).permitido).toBe(true);
     }
     expect((await rl.chequear(LIMITE_POR_VENTANA, VENTANA_MS, T0)).restantes).toBe(
