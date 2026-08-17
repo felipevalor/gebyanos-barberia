@@ -1308,7 +1308,6 @@ Orden del listado: `orden`, y a igualdad, `nombre`.
 
 ```json
 { "id": 1, "nombreNegocio": "Barbería Gebyanos",
-  "timezone": "America/Argentina/Buenos_Aires",
   "slotDuracionMin": 30, "minutosAnticipacionMin": 30,
   "diasMaxAnticipacion": 14,
   "logoUrl": null, "colorPrimario": null, "colorSecundario": null }
@@ -1322,13 +1321,20 @@ Rangos, **inclusivos en los dos extremos**:
 | `minutosAnticipacionMin` | 0 a 10080 (una semana) |
 | `diasMaxAnticipacion` | 1 a 365 |
 
-`timezone` tiene que ser un identificador **IANA**. El nombre de Windows del
-sistema viejo (`"Argentina Standard Time"`) se rechaza.
+### 🔴 `timezone` no existe en esta API
 
-**⚠️ Hoy `timezone` es informativo, no operativo**: el cálculo de fechas tiene
-la zona de Argentina fija en el código. Guardar otra cosa no cambia nada. Ver
-`docs/pendientes.md` — hasta que se conecte, el panel no debería ofrecerla como
-una perilla editable.
+**No sale en la respuesta y no se puede mandar en el `PUT`.** Mandarla da 400:
+
+```json
+{ "ok": false, "error": "La zona horaria no es configurable: el sistema opera siempre en hora de Argentina." }
+```
+
+La columna sigue en la base pero es informativa: el cálculo de fechas tiene la
+zona de Argentina fija en el código. Se sacó de la API justamente para que
+nadie le crea — un campo que se guarda y no hace nada es peor que uno que no
+está, porque alguien lo cambia, lo ve guardado y da por hecho que funcionó.
+
+**No pongas un selector de zona horaria en el panel.**
 
 Cambiar `slotDuracionMin` devuelve un `warning`: los turnos ya agendados
 conservan su horario aunque no coincida con la grilla nueva.

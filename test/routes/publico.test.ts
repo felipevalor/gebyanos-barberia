@@ -176,11 +176,13 @@ describe('el cache es opt-in, no global', () => {
 });
 
 describe('GET /api/negocio', () => {
-  it('devuelve la configuracion con timezone IANA', async () => {
+  it('devuelve la configuracion, SIN timezone', async () => {
     const negocio = await data<Record<string, unknown>>(await get('/api/negocio'));
 
     expect(negocio.nombreNegocio).toBe('Barbería Gebyanos');
-    expect(negocio.timezone).toBe('America/Argentina/Buenos_Aires');
+    // La zona horaria NO se expone: el sistema opera siempre en hora de
+    // Argentina y un campo visible invita a creer que se puede cambiar.
+    expect(negocio.timezone).toBeUndefined();
     expect(negocio.slotDuracionMin).toBe(30);
     expect(negocio.minutosAnticipacionMin).toBe(30);
     expect(negocio.diasMaxAnticipacion).toBe(14);

@@ -266,7 +266,7 @@ implementar la 2.6**, porque una vez que el frontend los matchee son contrato.
 
 ---
 
-## 🔴 Tarea 3.4 — `negocio.timezone` es informativo, no operativo
+## ✅ Tarea 3.4 — `negocio.timezone` — CERRADO 2026-08-17
 
 **Hallazgo, no decisión.** El campo se valida como IANA, se guarda, se muestra
 en el panel y sale en `/api/negocio`... y no cambia absolutamente nada.
@@ -292,9 +292,17 @@ Las dos salidas honestas:
 2. **Sacarlo de la interfaz**: dejar la columna (el sistema es multi-barbería en
    la Fase 6) pero no ofrecerla como una perilla editable hasta que 1 exista.
 
-Para Gebyanos, que está en Argentina, **la opción 2 es suficiente hoy**. La 1
-recién importa si una barbería de la Fase 6 queda en otra provincia con otro
-huso, cosa que en Argentina no pasa.
+**Se tomó la opción 2.** `timezone` salió del `PUT` **y de la respuesta** de
+`/api/admin/negocio` y `/api/negocio`: si quedaba en la respuesta, el frontend
+podía leerlo y creerle. Mandarlo en el `PUT` ahora da 400 con un mensaje que
+explica por qué, en vez de ignorarlo en silencio — el silencio se lee como
+éxito.
+
+La columna queda en la base, con un comentario en `schema.ts` y otro en
+`domain/dates.ts` que apunta al motivo: el trabajo real no es "leer la
+columna", es sacar el offset fijo `-03:00` de todo el sistema para que tolere
+horario de verano. Mucho riesgo en la parte más sensible del código, para un
+problema que una barbería argentina no tiene.
 
 ---
 

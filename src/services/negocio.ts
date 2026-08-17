@@ -6,6 +6,20 @@ import { negocio } from '../db/schema';
  * Configuracion del negocio. Fila unica, `id = 1`.
  *
  * Leerla puede cualquier usuario autenticado; escribirla, solo `owner`.
+ *
+ * ⚠️ `timezone` NO ES PARTE DE ESTA CONFIGURACION, a proposito.
+ *
+ * La columna existe en la base pero es INFORMATIVA: no se lee acá, no se
+ * escribe, y no sale en ninguna respuesta. La zona horaria del sistema esta
+ * fija en `domain/dates.ts`.
+ *
+ * Si se expusiera, alguien la cambiaria, la veria guardada y creeria que hizo
+ * algo — y los turnos se seguirian calculando en hora de Argentina. Un campo
+ * que se guarda y no hace nada invita a confiar en él.
+ *
+ * Cablearla de verdad significa sacar el offset fijo `-03:00` de todo el
+ * sistema para soportar horario de verano: mucho riesgo en la parte mas
+ * sensible del codigo, para un problema que una barberia argentina no tiene.
  */
 
 export const ID_NEGOCIO = 1;
@@ -26,8 +40,9 @@ export const RANGOS = {
 export const ERROR_SLOT = `slot_duracion_min inválido. Tiene que ser un número entero entre ${RANGOS.slotDuracionMin.min} y ${RANGOS.slotDuracionMin.max}.`;
 export const ERROR_ANTICIPACION = `minutos_anticipacion_min inválido. Tiene que ser un número entero entre ${RANGOS.minutosAnticipacionMin.min} y ${RANGOS.minutosAnticipacionMin.max}.`;
 export const ERROR_DIAS_MAX = `dias_max_anticipacion inválido. Tiene que ser un número entero entre ${RANGOS.diasMaxAnticipacion.min} y ${RANGOS.diasMaxAnticipacion.max}.`;
-export const ERROR_TIMEZONE =
-  'Zona horaria inválida. Usá un identificador IANA, por ejemplo America/Argentina/Buenos_Aires.';
+/** Se responde esto si alguien la manda igual: mejor un 400 que un silencio. */
+export const ERROR_TIMEZONE_NO_CONFIGURABLE =
+  'La zona horaria no es configurable: el sistema opera siempre en hora de Argentina.';
 
 /**
  * ⚠️ EL AVISO DE LA GRILLA.
@@ -43,7 +58,6 @@ export const AVISO_SLOT_CAMBIADO =
 export interface ConfiguracionNegocio {
   id: number;
   nombreNegocio: string;
-  timezone: string;
   slotDuracionMin: number;
   minutosAnticipacionMin: number;
   diasMaxAnticipacion: number;
@@ -52,48 +66,29 @@ export interface ConfiguracionNegocio {
   colorSecundario: string | null;
 }
 
+/**
+ * Columnas EXPLICITAS y no `select()`: un `select()` pelado arrastraria
+ * `timezone` de vuelta a la respuesta la proxima vez que alguien lea esto.
+ */
+const columnas = {
+  id: negocio.id,
+  nombreNegocio: negocio.nombreNegocio,
+  slotDuracionMin: negocio.slotDuracionMin,
+  minutosAnticipacionMin: negocio.minutosAnticipacionMin,
+  diasMaxAnticipacion: negocio.diasMaxAnticipacion,
+  logoUrl: negocio.logoUrl,
+  colorPrimario: negocio.colorPrimario,
+  colorSecundario: negocio.colorSecundario,
+};
+
 export async function leerNegocio(env: Env): Promise<ConfiguracionNegocio | null> {
-  const filas = await db(env.DB).select().from(negocio).where(eq(negocio.id, ID_NEGOCIO)).limit(1);
+  const filas = await db(env.DB).select(columnas).from(negocio).where(eq(negocio.id, ID_NEGOCIO)).limit(1);
   return filas[0] ?? null;
-}
-
-/**
- * ⚠️ HOY `timezone` NO CAMBIA EL COMPORTAMIENTO DEL SISTEMA.
- *
- * `domain/dates.ts` tiene la zona HARDCODEADA (`TZ` y un offset fijo `-03:00`),
- * asi que guardar "Europe/Madrid" acá valida, se persiste, se muestra en el
- * panel y en `/api/negocio`... y los turnos se siguen calculando en hora de
- * Argentina. El campo es informativo, no operativo.
- *
- * Se valida igual —guardar basura no ayuda a nadie— pero el panel NO deberia
- * ofrecerlo como si fuera una perilla que hace algo. Anotado en
- * docs/pendientes.md: o se conecta a `dates.ts`, o se saca de la interfaz.
- */
-
-/**
- * Valida un identificador IANA.
- *
- * Se prueba CONSTRUYENDO un formateador, no comparando contra una lista:
- * `Intl.supportedValuesOf` no esta garantizado en todos los runtimes y, donde
- * existe, su lista puede quedar corta respecto de lo que el propio motor
- * acepta. Un `RangeError` del motor es la respuesta autoritativa.
- *
- * El caso que importa: el sistema viejo guarda el nombre de Windows
- * ("Argentina Standard Time"), que no es IANA y tiene que rebotar.
- */
-export function esTimezoneValida(tz: unknown): boolean {
-  if (typeof tz !== 'string' || tz.trim() === '') return false;
-
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export interface EntradaNegocio {
   nombreNegocio?: unknown;
+  /** Solo para RECHAZARLA con un mensaje claro. No se guarda. */
   timezone?: unknown;
   slotDuracionMin?: unknown;
   minutosAnticipacionMin?: unknown;
@@ -126,10 +121,10 @@ export async function actualizarNegocio(
     if (!nombre) return { estado: 'error', error: ERROR_NOMBRE_REQUERIDO };
     cambios.nombreNegocio = nombre;
   }
+  // No se ignora en silencio: quien la mande se tiene que enterar de que el
+  // campo no hace nada, no creer que quedo guardado.
   if (entrada.timezone !== undefined) {
-    const tz = texto(entrada.timezone);
-    if (!esTimezoneValida(tz)) return { estado: 'error', error: ERROR_TIMEZONE };
-    cambios.timezone = tz;
+    return { estado: 'error', error: ERROR_TIMEZONE_NO_CONFIGURABLE };
   }
   if (entrada.slotDuracionMin !== undefined) {
     if (!enteroEnRango(entrada.slotDuracionMin, RANGOS.slotDuracionMin)) {

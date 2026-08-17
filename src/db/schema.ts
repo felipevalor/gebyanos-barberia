@@ -296,7 +296,13 @@ export const magicLinkTokens = sqliteTable(
 /**
  * Fila unica con id = 1.
  *
- * `timezone` guarda el nombre IANA. El sistema viejo guarda el de Windows
+ * ⚠️ `timezone` ES INFORMATIVA. No la lee nadie: la zona horaria del sistema
+ * esta fija en `domain/dates.ts`, junto con el offset `-03:00`. La columna se
+ * conserva —la Fase 6 es multi-barberia y puede llegar a servir— pero NO se
+ * expone ni en `/api/negocio` ni en el panel, porque un campo que se guarda y
+ * no hace nada invita a confiar en él. Ver `services/negocio.ts`.
+ *
+ * Guarda el nombre IANA. El sistema viejo guarda el de Windows
  * ("Argentina Standard Time"); no se copia.
  */
 export const negocio = sqliteTable('negocio', {

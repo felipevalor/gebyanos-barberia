@@ -184,7 +184,15 @@ Devuelven **200 con warning**, no 409:
 
 Alta con `slug` único (es el usuario de login) y password inicial. Baja y desactivación pasan por Bloquear+Avisar (tarea 3.2).
 
-**Cuidado con el último owner:** no permitas desactivar o borrar al único barbero con rol `owner`, o el panel queda inaccesible. El sistema viejo no valida esto — agregalo.
+**Cuidado con el último owner:** no permitas dejar el sistema sin ningún dueño activo, o el panel queda inaccesible para siempre. **Son tres puertas, no dos:**
+
+1. Desactivar al único `owner`
+2. Borrarlo
+3. **Cambiarle el rol a `barbero`** ← esta es la que se olvida, y hace el mismo daño
+
+Y un `owner` desactivado **no cuenta como respaldo**: si queda uno solo y está inactivo, el sistema ya está sin dueño operativo.
+
+El sistema viejo no valida ninguna de las tres.
 
 ### Servicios
 
@@ -196,21 +204,33 @@ Alta con `slug` único (es el usuario de login) y password inicial. Baja y desac
 
 Validá rangos: `slot_duracion_min` entre 5 y 240, `minutos_anticipacion_min` entre 0 y 10080, `dias_max_anticipacion` entre 1 y 365.
 
-`timezone` tiene que ser un identificador **IANA** válido. Validalo contra `Intl.supportedValuesOf('timeZone')` si está disponible.
+🔴 **`timezone` NO va en la configuración editable.** La zona horaria está fija en `domain/dates.ts` (Argentina, offset `-03:00`) y conectarla a la base sería un refactor caro: el offset fijo se cae en cuanto haya que soportar horario de verano, y eso toca la parte más sensible del sistema.
+
+Un campo que se guarda y no hace nada es peor que no tenerlo: alguien pone `Europe/Madrid`, lo ve guardado, y los turnos se siguen calculando en hora de Argentina. Silencioso y equivocado.
+
+**Sacalo del `PUT` de configuración y de la respuesta de `/api/negocio`.** Dejá la columna en la base con un comentario de que es informativa y no está cableada, y un comentario en `dates.ts` apuntando acá. Si algún día hace falta multi-zona, se hace en serio: se elimina el offset fijo de todo el sistema y se usa `Intl` con la zona de la base.
+
+Para una barbería argentina esto no se necesita nunca.
 
 ### Stats
 
 Conteos: reservas de hoy, de la semana, del mes, y recurrentes activos. Scoped por rol.
+
+**"La semana" y "el mes" son calendario, no ventanas móviles.** La semana va de **lunes a domingo** (así se habla de la semana en Argentina, y así es coherente con el mes calendario). No son "los próximos 7 días": en un viernes eso mezclaría dos semanas y el número dejaría de significar nada para el barbero.
+
+⚠️ **El cálculo del lunes es donde se cuela el bug clásico.** `getDay()` devuelve `0` para domingo, así que restar `dow` días le da al domingo **su propia semana** en vez de cerrar la que termina. El domingo pertenece a la semana que arranca el lunes anterior.
 
 **Criterios de aceptación:**
 
 - [ ] Un `barbero` en cualquier endpoint de owner recibe **403**
 - [ ] `slug` duplicado al crear un barbero da 400 con mensaje claro, no 500
 - [ ] `nombre` duplicado al crear un servicio da 400 con mensaje claro
-- [ ] Desactivar al único owner se rechaza
-- [ ] Cambiar la duración de un servicio no altera reservas existentes
-- [ ] Un `timezone` inválido se rechaza
+- [ ] **Las tres puertas del último owner** se rechazan: desactivar, borrar y cambiarle el rol
+- [ ] Un owner desactivado no cuenta como respaldo del único owner activo
+- [ ] Cambiar la duración de un servicio no altera reservas existentes, y el warning lo dice
+- [ ] `timezone` NO aparece en el `PUT` de configuración ni en `/api/negocio`
 - [ ] Las stats de un `barbero` solo cuentan lo suyo
+- [ ] La semana de las stats es lunes a domingo, y **un domingo cuenta en la semana que arrancó el lunes anterior**
 
 ---
 

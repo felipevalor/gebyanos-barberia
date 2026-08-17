@@ -5,7 +5,7 @@ import { uuidv7 } from '../../src/db/id';
 import { hashPassword } from '../../src/services/password';
 import { todayArgentina, addDays } from '../../src/domain/dates';
 import { calcularStats, lunesDeLaSemana } from '../../src/services/stats';
-import { esTimezoneValida } from '../../src/services/negocio';
+import { ERROR_TIMEZONE_NO_CONFIGURABLE } from '../../src/services/negocio';
 import { AVISO_DURACION_CAMBIADA } from '../../src/services/servicios';
 import {
   ERROR_SLUG_DUPLICADO,
@@ -549,18 +549,30 @@ describe('configuración del negocio', () => {
     expect(error).toContain('240');
   });
 
-  it('🔴 el timezone de Windows del sistema viejo se rechaza', async () => {
-    const res = await put({ timezone: 'Argentina Standard Time' });
+  it('🔴 timezone NO es configurable, ni siquiera con un IANA válido', async () => {
+    // El campo se saco a proposito: se guardaba y no hacia nada. Rechazarlo con
+    // un mensaje es mejor que ignorarlo, porque el silencio se lee como exito.
+    for (const tz of ['America/Argentina/Cordoba', 'Argentina Standard Time', 'UTC']) {
+      const res = await put({ timezone: tz });
 
-    expect(res.status).toBe(400);
-    expect((await cuerpoDe(res)).error).toContain('IANA');
+      expect(res.status, tz).toBe(400);
+      expect((await cuerpoDe(res)).error).toBe(ERROR_TIMEZONE_NO_CONFIGURABLE);
+    }
+
+    // Y la columna quedo intacta: el rechazo es real, no cosmetico.
+    const fila = await env.DB.prepare('SELECT timezone FROM negocio WHERE id = 1').first<{
+      timezone: string;
+    }>();
+    expect(fila?.timezone).toBe('America/Argentina/Buenos_Aires');
   });
 
-  it('un IANA válido entra y se guarda', async () => {
-    const res = await put({ timezone: 'America/Argentina/Cordoba' });
+  it('🔴 timezone tampoco SALE en la respuesta: no se puede confiar en algo que no se ve', async () => {
+    const { data } = await cuerpoDe(await pedir('/api/admin/negocio', { cookie: cookieOwner }));
+    expect(data.timezone).toBeUndefined();
 
-    expect(res.status).toBe(200);
-    expect((await cuerpoDe(res)).data.timezone).toBe('America/Argentina/Cordoba');
+    // Ni en el endpoint publico, que es el que consume el sitio.
+    const publico = await cuerpoDe(await pedir('/api/negocio'));
+    expect(publico.data.timezone).toBeUndefined();
   });
 
   it('cambiar el paso de la grilla avisa; otro campo no', async () => {
@@ -576,20 +588,6 @@ describe('configuración del negocio', () => {
     expect(data.nombreNegocio).toBe('Gebyanos');
     expect(data.slotDuracionMin).toBe(30);
     expect(data.diasMaxAnticipacion).toBe(21);
-  });
-});
-
-describe('esTimezoneValida', () => {
-  it('acepta identificadores IANA', () => {
-    for (const tz of ['America/Argentina/Buenos_Aires', 'UTC', 'Europe/Madrid']) {
-      expect(esTimezoneValida(tz), tz).toBe(true);
-    }
-  });
-
-  it('rechaza los que no lo son', () => {
-    for (const tz of ['Argentina Standard Time', 'Marte/Olympus', '', '   ', 'GMT-3', null, 42]) {
-      expect(esTimezoneValida(tz), String(tz)).toBe(false);
-    }
   });
 });
 

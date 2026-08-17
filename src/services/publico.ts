@@ -20,7 +20,6 @@ import { barberos, servicios, promos, catalogo, negocio } from '../db/schema';
 
 export interface NegocioDto {
   nombreNegocio: string;
-  timezone: string;
   slotDuracionMin: number;
   minutosAnticipacionMin: number;
   diasMaxAnticipacion: number;
@@ -68,7 +67,6 @@ export async function getNegocio(d1: D1Database): Promise<NegocioDto | null> {
   const filas = await db(d1)
     .select({
       nombreNegocio: negocio.nombreNegocio,
-      timezone: negocio.timezone,
       slotDuracionMin: negocio.slotDuracionMin,
       minutosAnticipacionMin: negocio.minutosAnticipacionMin,
       diasMaxAnticipacion: negocio.diasMaxAnticipacion,

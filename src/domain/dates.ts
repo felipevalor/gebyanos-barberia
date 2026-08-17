@@ -9,6 +9,15 @@
  * 21:00 hora Argentina es "maniana" en UTC.
  */
 
+/**
+ * ⚠️ LA ZONA ESTA FIJA ACA, Y ES LA UNICA FUENTE DE VERDAD.
+ *
+ * `negocio.timezone` existe como columna pero NO la lee nadie, ni este archivo
+ * ni ningun otro: es informativa y no se expone en la API. Si algun dia hay que
+ * soportar de verdad otra zona, el trabajo no es "leer la columna" — es sacar
+ * el `OFFSET_ARGENTINA` fijo de todo el sistema para que tolere horario de
+ * verano, que es la parte mas sensible del codigo. Ver `services/negocio.ts`.
+ */
 export const TZ = 'America/Argentina/Buenos_Aires';
 
 /** Argentina no usa horario de verano desde 2009: el offset es fijo. */
