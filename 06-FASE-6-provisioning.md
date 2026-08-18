@@ -24,38 +24,17 @@ Suena a más trabajo que un sistema multi-tenant, pero para esta escala es al re
 
 ### Los límites del free tier
 
-⚠️ **El plan gratuito da 10 bases D1 por cuenta, y este límite Cloudflare SÍ lo aplica** — a diferencia del de CPU, que está documentado en 10 ms pero medido en ~1,8 s. No confundir uno con el otro.
+⚠️ **El techo real son 5 barberías, no 10.**
 
-**El techo no son 10 barberías: son 6.** La cuenta ya tiene otras cosas.
+El plan gratuito da **10 bases D1 por cuenta**, pero la cuenta ya tiene **5 en uso** por otros proyectos (verificado en la pantalla de uso de Cloudflare). Quedan 5 disponibles.
 
-Medido el 2026-08-17 con `wrangler d1 list`:
+Este límite **sí se aplica** — a diferencia del de CPU, que Cloudflare hoy no enforcea (ver `00-CONTEXTO.md`). No confundas los dos: acá el techo es real y la API va a fallar.
 
-| Base | De qué es |
-|---|---|
-| `valor-solutions-db` | otro proyecto |
-| `cosmetologa-analia-velazco` | otro proyecto |
-| `finanzas-db` | otro proyecto |
-| `gym-db` | otro proyecto |
-| `barberia` | **esta barbería** |
+Cuando se acerque, las opciones son otra cuenta de Cloudflare o Workers Paid, que sube el límite a 50.000. **No lo resuelvas por anticipado** — el script de la tarea 6.2 tiene que contar las bases existentes y avisar, y con eso alcanza.
 
-| | |
-|---|---|
-| Techo del plan Free | 10 |
-| Ocupadas por otros proyectos | 4 |
-| Ocupadas por barberías | 1 |
-| **Libres** | **5** |
+**Los Cron Triggers ya no son el problema que eran.** Son 5 por cuenta, pero el andamio del proyecto usa **un solo trigger con despacho interno por hora** en vez de tres. Con uno por instancia, las 5 barberías entran sin necesitar el orquestador de la tarea 6.4 — que pasa de necesario a opcional.
 
-O sea: **caben 5 barberías más, 6 en total.** Y el número baja si aparece otro
-proyecto en la misma cuenta — por eso el script cuenta las bases existentes en
-vez de asumir un número.
-
-Cuando se acerque, las opciones son otra cuenta de Cloudflare, o revisar si el
-volumen ya justifica pagar. **No lo resuelvas por anticipado** — anotalo y
-seguí.
-
-Los demás límites (100.000 requests/día, 5 crons) son **por cuenta**, no por Worker. Con 6 barberías de bajo volumen seguís sobrando en requests.
-
-Los 5 Cron Triggers también se comparten, pero **ese ya no aprieta**: el sistema usa **un solo cron horario** con despacho interno por hora, no tres. Con 5 barberías entran justo, y con 6 hace falta el Worker orquestador de la tarea 6.4. Ver `src/index.ts`.
+Los demás límites (100.000 requests/día, 5M filas leídas) sobran por órdenes de magnitud con barberías de bajo volumen.
 
 ---
 
@@ -129,12 +108,9 @@ npm run provision -- --slug=nuevabarberia --nombre="Barbería Nueva" \
 
 **La password temporal se muestra una sola vez** y hay que cambiarla al primer login. Generala con CSPRNG, no con algo predecible.
 
-**Ojo con el límite de bases D1.** El script **tiene que contar las bases existentes** antes de crear, con `wrangler d1 list`, y no asumir ningún número: la cuenta comparte el cupo con otros proyectos y ese cupo cambia sin que este repo se entere.
+**Contá las bases antes de crear.** El límite son 10 por cuenta y la cuenta ya tiene 5 en uso por otros proyectos, así que el margen real son 5 barberías. Si el alta va a ser la última disponible, avisá; si no queda lugar, fallá con un mensaje claro en vez de dejar que la API tire un error críptico.
 
-- Si quedan 2 o menos libres → avisar, y seguir.
-- Si quedan 0 → fallar con un mensaje que diga **cuántas hay y cuál es el techo**, en vez de dejar salir el error críptico de la API.
-
-Al momento de escribir esto quedaban 5 libres de 10.
+**No hardcodees el 10 ni el 5.** Contá las que existen y comparalas con el límite del plan, así el script sigue siendo correcto si se libera una base o si la cuenta pasa a Paid (donde el límite son 50.000).
 
 **Criterios de aceptación:**
 
@@ -142,8 +118,7 @@ Al momento de escribir esto quedaban 5 libres de 10.
 - [ ] Correrlo dos veces con el mismo slug no rompe nada
 - [ ] Si falla a mitad de camino, dice qué se creó y cómo limpiarlo
 - [ ] La password temporal se genera con CSPRNG y se muestra una sola vez
-- [ ] Cuenta las bases D1 existentes antes de crear, no asume un número
-- [ ] Con 2 o menos libres avisa; con 0 falla diciendo cuántas hay y cuál es el techo
+- [ ] Cuenta las bases D1 existentes y avisa antes de agotar el cupo, sin números hardcodeados
 - [ ] Un slug inválido se rechaza antes de crear ningún recurso
 - [ ] El owner puede entrar al panel inmediatamente después
 
@@ -185,40 +160,27 @@ npm run migrate:all
 
 ---
 
-## Tarea 6.4 — El problema de los Cron Triggers
+## Tarea 6.4 — Cron Triggers *(opcional — ya resuelto en el andamio)*
 
-⚠️ **Esto hay que resolverlo antes de la segunda barbería.**
+✅ **Esto ya no es un problema.** Se dejó documentado porque explica una decisión de diseño que si no parece arbitraria.
 
-El plan gratuito da **5 Cron Triggers por cuenta**, no por Worker. El sistema usa 3 (limpieza, feriados, recurrentes). Con dos barberías serían 6 — **no entran**.
+El plan gratuito da **5 Cron Triggers por cuenta**, no por Worker. La versión original de esta spec pedía tres crons por instancia (limpieza, feriados, recurrentes), lo que significaba que **con dos barberías ya no entraban**.
 
-### Tres salidas
+**El andamio del proyecto usa un solo trigger horario con despacho interno por hora**, que decide qué tarea corre según la hora. Con uno por instancia, las 5 barberías que permite el cupo de bases D1 entran sin más.
 
-**A. Un Worker orquestador de crons** ⭐
+⚠️ **No "simplifiques" esto de vuelta a tres crons.** Parece más limpio y rompe el modelo de una instancia por barbería en la segunda alta.
 
-Un Worker aparte con los 3 crons. Cuando se dispara, recorre todas las instancias y llama a un endpoint interno de cada una que hace el trabajo.
+### Si algún día hacen falta más de 5 instancias
 
-- A favor: 3 crons en total sin importar cuántas barberías haya. Escala sin límite.
-- En contra: hay que autenticar la llamada entre Workers (un secret compartido) y manejar que una instancia caída no frene a las demás.
+Ahí sí hace falta un **Worker orquestador**: un Worker aparte con el cron, que recorra todas las instancias y llame a un endpoint interno de cada una.
 
-**B. Un solo cron que hace todo**
+- A favor: un cron en total sin importar cuántas barberías haya.
+- En contra: hay que autenticar la llamada entre Workers con un secret compartido, y manejar que una instancia caída no frene a las demás.
+- Detalle: llamalas **en paralelo con un límite de concurrencia**, y logueá cuáles fallaron. Si una barbería no generó sus recurrentes, alguien tiene que enterarse.
 
-Reducir de 3 a 1: un cron diario que hace la limpieza, refresca feriados y genera recurrentes en secuencia.
+Pero para eso primero hay que resolver el techo de bases D1, que se agota antes. **No construyas el orquestador hasta que el límite de instancias deje de ser el cuello de botella.**
 
-- A favor: lo más simple. 5 crons alcanzan para 5 barberías.
-- En contra: pierde granularidad (la limpieza horaria pasa a diaria), y el techo sigue estando.
-
-**C. Cron externo**
-
-Un servicio gratuito de cron que llame endpoints HTTP.
-
-- A favor: cero consumo de crons de Cloudflare.
-- En contra: una dependencia externa más, y hay que proteger esos endpoints.
-
-### Recomendación
-
-**Opción A.** Es la única que escala de verdad y el costo de implementación es una tarde. Con el orquestador, agregar la barbería número 20 no cambia nada.
-
-Detalle importante: el orquestador debe llamar a las instancias **en paralelo con un límite de concurrencia**, y **loguear cuáles fallaron**. Si una barbería no generó sus recurrentes, alguien tiene que enterarse.
+*(Los criterios de abajo aplican solo si algún día se construye el orquestador.)*
 
 **Criterios de aceptación:**
 
@@ -245,9 +207,7 @@ Documentación en `docs/runbook.md`. **No es opcional** — es lo que permite qu
 
 **Diagnóstico.** Qué mirar cuando el cliente dice "no me llegan los WhatsApp", "no aparecen los turnos en el calendario", "no puedo entrar al panel". Los tres son las consultas más frecuentes y los tres tienen causas conocidas.
 
-**Límites y cuándo se acercan.** Las 10 bases D1 (de las que ya hay 4 tomadas por otros proyectos), los 5 crons, y el de CPU. Qué hacer al llegar a cada uno.
-
-Distinguir los **duros** de los **blandos**: el de bases D1 Cloudflare lo aplica; el de CPU está documentado en 10 ms pero medido en ~1,8 s. Ver `00-CONTEXTO.md`.
+**Límites y cuándo se acercan.** Las bases D1 (10 por cuenta, 5 ya en uso → 5 barberías), los 5 Cron Triggers, y el límite de CPU. Qué hacer al llegar a cada uno, y **cuál de los tres se aplica de verdad** — ver `00-CONTEXTO.md`, porque el de CPU hoy no se enforcea y el de D1 sí.
 
 **Criterios de aceptación:**
 
@@ -262,7 +222,7 @@ Distinguir los **duros** de los **blandos**: el de bases D1 Cloudflare lo aplica
 
 - [ ] Dar de alta una barbería es un comando y funciona de punta a punta
 - [ ] Actualizar todas las instancias es otro comando y reporta fallos
-- [ ] Los crons no escalan con la cantidad de barberías
+- [ ] Cada instancia usa **un solo** Cron Trigger, no tres
 - [ ] El runbook permite operar sin haber construido el sistema
 - [ ] Todo sigue dentro del free tier
 
@@ -274,8 +234,10 @@ No son problemas de hoy. Están anotados para que nadie se sorprenda:
 
 | Límite | Techo | Qué hacer al llegar |
 |---|---|---|
-| Bases D1 por cuenta | **6 barberías** (10 del plan − 4 de otros proyectos) | Otra cuenta de Cloudflare, o evaluar si el volumen justifica pagar |
+| Bases D1 por cuenta | **5 barberías** (10 de límite, 5 ya en uso) | Otra cuenta de Cloudflare, o Workers Paid (50.000 bases) |
 | Requests por cuenta | 100.000/día compartidos | Con barberías chicas, muy lejos |
-| Cron Triggers | 5 por cuenta | Resuelto con el orquestador (tarea 6.4) |
+| Cron Triggers | 5 por cuenta | Ya resuelto: un solo trigger por instancia (tarea 6.4) |
+
+**El techo que se agota primero es el de bases D1: 5 barberías.** Antes de tocar cualquier otro límite vas a chocar con ese, así que es el único que vale tener en el radar.
 
 **Y una advertencia sobre el modelo:** una instancia por cliente funciona muy bien hasta unas 10-20 instancias. Más allá, el overhead operativo empieza a superar lo que costaría un multi-tenant bien hecho. **Si el negocio crece a ese punto, es momento de replantear la arquitectura** — pero llegar ahí sería un buen problema, y para entonces vas a tener datos reales para decidir en vez de suposiciones.

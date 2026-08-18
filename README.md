@@ -53,7 +53,24 @@ Las dependencias no son lineales. Esto es lo que desbloquea qué:
 
 O sea: el frontend corre **en paralelo** a las fases 3, 4 y 5 del backend, en otra rama y con otro agente. Y la Fase 6 no es "lo último", es "cuando haga falta" — sin frontend no lanzás nada, sin provisioning sí.
 
-**El contrato de API se genera cuando cierre la tarea 2.4**, leyendo el código real. Hasta entonces el frontend no debe inventar contratos.
+✅ **El contrato de API ya existe: `docs/contrato-api.md`**, generado leyendo el código real. Es la fuente de verdad para el frontend — no inventar nada que no esté ahí.
+
+## Estado
+
+| | Estado |
+|---|---|
+| **Backend, fases 1 a 5** | ✅ Completo, deployado, 788 tests |
+| **Fase 6 — provisioning** | ⏸️ Espera a que exista una segunda barbería |
+| **FE-1 — sitio público** | ⬜ Desbloqueado, sin empezar |
+| **FE-2 — panel admin** | ⬜ Desbloqueado, sin empezar |
+
+**Lo único en el camino crítico es el frontend.** El backend está completo; sin interfaz no hay producto.
+
+### Pendientes de lanzamiento, no de código
+
+- 🔴 **Rotar la credencial de Google** que está en texto plano en `barberiagebyanos.BE/appsettings.Development.json`. Es una exposición activa, no un ítem de checklist.
+- **Cargar el horario real de Gebyanos.** Hoy producción tiene un placeholder de 9 a 20 corrido, así que ofrece turnos a las 14:00. Lo tiene que decir el cliente.
+- **Decidir si se migran los datos de Azure.** Primero hay que saber si el sistema viejo sigue en uso con turnos reales.
 
 ## El orden importa
 

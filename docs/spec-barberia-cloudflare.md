@@ -59,7 +59,7 @@ Una barbería con varios barberos necesita que sus clientes reserven turnos onli
 | Cola de WhatsApp | **Cloudflare Queues** | 10.000 ops/día en Free. Persistente y con reintentos |
 | Jobs programados | **Cron Triggers** | 5 en Free. Alcanzan: limpieza de sesiones, recurrentes, caché de feriados |
 | Caché de feriados | **Workers KV** con TTL 24 h | La API externa se consulta una vez por día |
-| Secretos | **Wrangler secrets** | `MAGIC_LINK_SIGNING_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `CALLMEBOT_*` |
+| Secretos | **Wrangler secrets** | `MAGIC_LINK_SECRET`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `CALLMEBOT_*` |
 | Frontend | **Static Assets** en el mismo Worker | Mismo origen que la API — la cookie de sesión funciona sin CORS |
 | Tests | **Vitest** + `@cloudflare/vitest-pool-workers` | Corre los tests dentro del runtime real de Workers |
 
@@ -217,7 +217,7 @@ UNIQUE `(barbero_id, fecha)`.
 | `calendar_event_id` | TEXT | Para poder borrar/reprogramar en Calendar |
 | `cancel_token` | TEXT | UNIQUE. Legacy — el flujo nuevo usa magic links |
 | `source` | TEXT NOT NULL DEFAULT 'web' | `'web'` \| `'admin'` \| `'import'` |
-| `turno_auto_fecha` | TEXT | Fecha calculada por el anclaje, si vino de un recurrente |
+| `turno_auto_iso` | TEXT | Fecha calculada por el anclaje, si vino de un recurrente |
 | `estado` | TEXT NOT NULL DEFAULT 'activa' | 🆕 **`'activa'` \| `'cancelada'`.** Ver abajo |
 | `cancelada_at` | TEXT | 🆕 |
 | `created_at` | TEXT NOT NULL | |
@@ -817,7 +817,7 @@ Los cuatro detalles que importan:
 
 **Si se pasa una fecha explícita**, se usa esa y solo se valida disponibilidad puntual — sin el loop. Si está cerrada: `No se generó: {motivo} Mové la fecha/hora manualmente.`
 
-**Al crear:** pasar por el mismo Durable Object del barbero. Si hay solapamiento: `Slot Ocupado. Intente mover manualmente.` El turno queda con `source = 'admin'` y `turno_auto_fecha` = la fecha calculada (para auditoría). Actualizar `ultimo_turno_fecha`.
+**Al crear:** pasar por el mismo Durable Object del barbero. Si hay solapamiento: `Slot Ocupado. Intente mover manualmente.` El turno queda con `source = 'admin'` y `turno_auto_iso` = la fecha calculada (para auditoría). Actualizar `ultimo_turno_fecha`.
 
 🆕 **El sistema actual no tiene generación automática: un humano tiene que apretar el botón para cada cliente.** Está listado como pendiente en `docs/EDGE_CASES.md`. En Cloudflare es un **Cron Trigger** y es una de las mejoras más baratas de todo el proyecto: correr diario, buscar recurrentes activos cuya próxima fecha entra en la ventana de anticipación, generar. Hacelo idempotente (chequear que no exista ya un turno para ese ciclo) y logueá lo que falló para revisión manual.
 

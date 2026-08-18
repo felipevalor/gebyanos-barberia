@@ -463,3 +463,155 @@ tocando `expires_at` sin reemitir el token, los dos valores divergen y **gana
 el más corto**: el `exp` firmado seguiría venciendo a los 15 minutos aunque la
 fila diga otra cosa. Extender la vida requiere emitir un token nuevo, no
 actualizar la fila.
+
+---
+
+# 🔴 URGENTE — Rotar la credencial de Google
+
+**Estado: BLOQUEADO por falta de acceso a Google Cloud.** `gcloud` no está
+instalado en esta máquina, así que los pasos 2 y 4 los tiene que correr Felipe.
+
+## Lo que se verificó (2026-08-18)
+
+| Chequeo | Resultado |
+|---|---|
+| ¿El archivo está en el working tree? | **Sí** — `Barberia.Api/appsettings.Development.json` |
+| ¿Está trackeado por git? | No — lo cubre `.gitignore:10` (`appsettings.*.json`) |
+| ¿Aparece en la historia alcanzable? | **No**, en ninguna de las 11 ramas remotas |
+| ¿`BEGIN PRIVATE KEY` en algún commit? | **No** |
+| ¿GitHub code search en la org? | 0 resultados |
+| Copias en disco | **7**, todas en `bin/` de builds, todas ignoradas |
+
+**O sea: la purga del historial se sostuvo.** Lo que hay es una copia local en
+el working tree y seis más en salidas de build.
+
+⚠️ **Aun así hay que asumirla comprometida**, por dos razones:
+
+1. Si el objeto llegó a pushearse alguna vez, GitHub conserva los objetos
+   inalcanzables y siguen siendo recuperables por SHA. Una purga limpia la
+   historia alcanzable, no el almacenamiento.
+2. En este repo **sí se commitearon salidas de build** (`Barberia.Api/bin/**/appsettings.json`
+   está en la historia). Ese es exactamente el camino por el que un secreto
+   purgado "vuelve": alguien buildea, el `appsettings.Development.json` se copia
+   a `bin/`, y un `git add` amplio lo levanta desde ahí.
+
+## Qué credencial es
+
+| Campo | Valor |
+|---|---|
+| Proyecto GCP | `calendar-barberias` |
+| Service account | `barberia-worker@calendar-barberias.iam.gserviceaccount.com` |
+| **`private_key_id` a revocar** | `a61a25d618c32b7895c88d295ed6e45c29f90262` |
+
+(Son identificadores, no secretos. El material de la clave no sale de la máquina.)
+
+## ⚠️ EL ORDEN IMPORTA — revocar primero puede romper producción
+
+La barbería **podría seguir operando sobre el sistema viejo en Azure**, que usa
+esta misma service account para sincronizar Google Calendar. Revocar la clave
+antes de tener la nueva en el sistema que está vivo le corta la sincronización
+al cliente sin aviso.
+
+Esto se cruza con la pregunta abierta de más abajo (¿Gebyanos sigue usando
+Azure?). **Resolvé esa primero**, y después:
+
+- **Si el sistema viejo está vivo:** crear la clave nueva → cargarla en Azure y
+  en el Worker → *recién ahí* revocar la vieja.
+- **Si está abandonado:** revocar la vieja de una y crear la nueva solo para el
+  Worker.
+
+## Los pasos
+
+**0. Borrar las copias locales** (son salidas de build, se regeneran con
+`dotnet build`):
+
+```bash
+cd barberiagebyanos.BE
+find . -name "appsettings.Development.json" -path "*/bin/*" -delete
+```
+
+**1. Agregar `bin/` y `obj/` al `.gitignore` del repo viejo**, si no están. Es
+lo que impide que el secreto vuelva por la puerta de atrás.
+
+**2. Crear la clave nueva** (necesita `gcloud` autenticado):
+
+```bash
+gcloud config set project calendar-barberias
+gcloud iam service-accounts keys create ~/gebyanos-sa-nueva.json \
+  --iam-account=barberia-worker@calendar-barberias.iam.gserviceaccount.com
+```
+
+**3. Cargarla en el Worker** — son dos secrets separados, no el JSON entero
+(ver el docstring de `src/services/gcal.ts`):
+
+```bash
+cd gebyanos-barberia
+printf '%s' "barberia-worker@calendar-barberias.iam.gserviceaccount.com" \
+  | npx wrangler secret put GOOGLE_SA_EMAIL
+python3 -c "import json;print(json.load(open('$HOME/gebyanos-sa-nueva.json'))['private_key'],end='')" \
+  | npx wrangler secret put GOOGLE_SA_PRIVATE_KEY
+```
+
+**4. Revocar la vieja** — recién después de confirmar que lo nuevo anda:
+
+```bash
+gcloud iam service-accounts keys delete a61a25d618c32b7895c88d295ed6e45c29f90262 \
+  --iam-account=barberia-worker@calendar-barberias.iam.gserviceaccount.com
+```
+
+**5. Borrar el JSON descargado** (`rm ~/gebyanos-sa-nueva.json`) y verificar con
+`gcloud iam service-accounts keys list` que solo queda la nueva.
+
+---
+
+## 🔴 El Worker en producción no tiene NINGÚN secret configurado
+
+`wrangler secret list` devuelve `[]`. Hallazgo al preparar la rotación, y tiene
+consecuencias hoy:
+
+| Secret | Sin él pasa esto |
+|---|---|
+| `GOOGLE_SA_EMAIL` / `GOOGLE_SA_PRIVATE_KEY` | Calendar deshabilitado. **Degrada en silencio, por diseño** — las reservas se crean igual |
+| `MAGIC_LINK_SECRET` | `/api/mi-turno/*` **falla entero**: `emitirToken` lanza |
+| `ENCRYPTION_KEY` | `PUT /api/admin/callmebot` devuelve **500** |
+| `CALLMEBOT_APIKEY` | Sin fallback global de WhatsApp (los barberos con key propia andan igual) |
+
+Los tres últimos hay que cargarlos antes del lanzamiento, no solo el de Google.
+`MAGIC_LINK_SECRET` necesita 32 caracteres como mínimo o el arranque falla a
+propósito.
+
+---
+
+# Preguntas abiertas — no son tareas de código
+
+## 1. El horario real de Gebyanos — lo tiene que decir el cliente
+
+Producción tiene un **placeholder de 9 a 20 corrido** y está ofreciendo turnos
+a las 14:00. Las cuatro preguntas concretas:
+
+1. ¿A qué hora abre y a qué hora cierra?
+2. ¿Corta al mediodía? Si sí, ¿entre qué horas?
+3. ¿Qué días trabaja? (hoy está sembrado lunes a sábado, domingo cerrado)
+4. ¿El horario del sábado es distinto?
+
+No inventarlo: un placeholder que nadie corrigió es peor que un día cerrado,
+porque el día cerrado se ve en el panel y el turno fantasma no.
+
+## 2. ¿Migrar los datos de Azure? — primero hay que saber si hay datos
+
+**La pregunta previa es si Gebyanos sigue usando el sistema viejo con turnos
+reales.** Si quedó abandonado, no hay nada que migrar y esto se cierra sin
+trabajo.
+
+Si sigue vivo, hace falta:
+
+- un script de export/import (`Barberia.Migrator/` tiene el molde del mapeo de
+  IDs en la dirección inversa);
+- una ventana de cutover, porque las reservas nuevas que entren durante la
+  migración se pierden;
+- decidir qué se migra: clientes y reservas futuras seguro; el historial de
+  reservas pasadas es opcional y es el grueso del volumen.
+
+Esta pregunta **bloquea la rotación de la credencial de Google** (ver el orden
+más arriba): si el sistema viejo está vivo, revocar la clave le corta la
+sincronización de Calendar al cliente.

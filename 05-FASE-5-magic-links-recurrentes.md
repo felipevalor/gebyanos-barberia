@@ -29,7 +29,7 @@ Tenelo presente al implementar: cada decisión de acá está calibrada para que 
 
 `exp` en epoch **segundos**. TTL default **15 minutos**.
 
-La clave de firma viene de un secret (`MAGIC_LINK_SIGNING_KEY`), mínimo 32 caracteres. **Validá al arrancar** que exista y tenga largo suficiente; si no, falla el arranque. El sistema viejo hace exactamente esto y evita que una mala configuración llegue a producción con tokens forjables.
+La clave de firma viene de un secret (`MAGIC_LINK_SECRET`), mínimo 32 caracteres. **Validá al arrancar** que exista y tenga largo suficiente; si no, falla el arranque. El sistema viejo hace exactamente esto y evita que una mala configuración llegue a producción con tokens forjables.
 
 ### Validación, en este orden exacto
 
@@ -119,7 +119,7 @@ Normalizar y buscar reservas **activas y futuras** (`fecha >= hoy AND estado = '
 - [ ] Reprogramar al mismo horario que ya tiene no da conflicto consigo misma
 - [ ] Cancelar deja `estado = 'cancelada'`, la fila sigue en la base
 - [ ] El slot cancelado vuelve a estar disponible
-- [ ] Sin `MAGIC_LINK_SIGNING_KEY` o con menos de 32 caracteres, el arranque falla
+- [ ] Sin `MAGIC_LINK_SECRET` o con menos de 32 caracteres, el arranque falla
 
 ---
 
@@ -148,7 +148,7 @@ Usa `calcularProximaFecha` de la Fase 1 (tarea 1.6).
 
 **Al crear el turno:** pasa por el Durable Object del barbero. Si hay solapamiento: `Slot Ocupado. Intente mover manualmente.`
 
-El turno queda con `source = 'admin'` y `turno_auto_fecha` = la fecha calculada (para auditoría). Actualizar `ultimo_turno_fecha` del recurrente.
+El turno queda con `source = 'admin'` y `turno_auto_iso` = la fecha calculada (para auditoría). Actualizar `ultimo_turno_fecha` del recurrente.
 
 Notificar por WhatsApp con `Tu turno recurrente ha sido cargado.`
 
@@ -179,7 +179,7 @@ Si al borrar o desactivar un recurrente quedan **turnos futuros ya generados**, 
 - [ ] Sin `hora_preferida` no genera y da el mensaje exacto
 - [ ] Un `barbero` no puede generar para el recurrente de otro (403)
 - [ ] Con fecha explícita, no corre el loop de 5 ciclos
-- [ ] El turno generado queda con `source = 'admin'` y `turno_auto_fecha` seteado
+- [ ] El turno generado queda con `source = 'admin'` y `turno_auto_iso` seteado
 - [ ] `ultimo_turno_fecha` se actualiza después de generar
 - [ ] El listado muestra el próximo turno real, no solo el último registrado
 
@@ -218,7 +218,7 @@ Si se generara con menos anticipación (2 o 7 días), el horario habitual del re
 
 Antes de crear, verificá que no exista ya un turno para ese recurrente en ese ciclo. Dos formas:
 
-- Chequear que no haya una reserva activa con el mismo `turno_auto_fecha`
+- Chequear que no haya una reserva activa con el mismo `turno_auto_iso`
 - O apoyarse en `ultimo_turno_fecha`: si ya es >= la fecha calculada, no generar
 
 Hacé las dos. El costo es una query y el beneficio es no llenarle la agenda al barbero.
