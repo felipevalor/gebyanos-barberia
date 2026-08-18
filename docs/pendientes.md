@@ -490,10 +490,16 @@ el working tree y seis más en salidas de build.
 1. Si el objeto llegó a pushearse alguna vez, GitHub conserva los objetos
    inalcanzables y siguen siendo recuperables por SHA. Una purga limpia la
    historia alcanzable, no el almacenamiento.
-2. En este repo **sí se commitearon salidas de build** (`Barberia.Api/bin/**/appsettings.json`
-   está en la historia). Ese es exactamente el camino por el que un secreto
-   purgado "vuelve": alguien buildea, el `appsettings.Development.json` se copia
-   a `bin/`, y un `git add` amplio lo levanta desde ahí.
+2. En este repo **se commitearon salidas de build** (`Barberia.Api/bin/**/appsettings.json`
+   está en la historia, del 2026-04-01). Ese es el camino por el que un secreto
+   purgado "vuelve": alguien buildea, el archivo se copia a `bin/`, y un
+   `git add` amplio lo levanta desde ahí.
+
+   ✅ **Ese camino ya está cerrado**, verificado el 2026-08-18: `bin/` y `obj/`
+   están en `.gitignore` (líneas 2-3), hay **0 archivos de `bin/` u `obj/`
+   trackeados**, y el commit `533f3a7` (2026-04-02) los sacó del índice. Lo que
+   quedó en la historia es el `appsettings.json` **sin secretos**, no el
+   `.Development.json`. No hay nada que agregar al `.gitignore`.
 
 ## Qué credencial es
 
@@ -505,62 +511,38 @@ el working tree y seis más en salidas de build.
 
 (Son identificadores, no secretos. El material de la clave no sale de la máquina.)
 
-## ⚠️ EL ORDEN IMPORTA — revocar primero puede romper producción
+## No hay restricción de orden
 
-La barbería **podría seguir operando sobre el sistema viejo en Azure**, que usa
-esta misma service account para sincronizar Google Calendar. Revocar la clave
-antes de tener la nueva en el sistema que está vivo le corta la sincronización
-al cliente sin aviso.
+Azure **no tiene clientes reales**, así que no hay sincronización de nadie que
+se pueda cortar. Se puede borrar la service account vieja de una.
 
-Esto se cruza con la pregunta abierta de más abajo (¿Gebyanos sigue usando
-Azure?). **Resolvé esa primero**, y después:
+## El camino: service account NUEVA y dedicada, no rotar la clave
 
-- **Si el sistema viejo está vivo:** crear la clave nueva → cargarla en Azure y
-  en el Worker → *recién ahí* revocar la vieja.
-- **Si está abandonado:** revocar la vieja de una y crear la nueva solo para el
-  Worker.
+La vieja (`barberia-worker@`) estuvo expuesta y **no se reusa**: se borra
+entera, no solo su clave. La nueva queda dedicada al Worker, así que su alcance
+está acotado a este sistema.
 
-## Los pasos
+## Los pasos — los corre Felipe
 
-**0. Borrar las copias locales** (son salidas de build, se regeneran con
-`dotnet build`):
+1. **Borrar las copias locales.** Son salidas de build, se regeneran con
+   `dotnet build`:
 
-```bash
-cd barberiagebyanos.BE
-find . -name "appsettings.Development.json" -path "*/bin/*" -delete
-```
+   ```bash
+   cd barberiagebyanos.BE
+   find . -name "appsettings.Development.json" -path "*/bin/*" -delete
+   ```
 
-**1. Agregar `bin/` y `obj/` al `.gitignore` del repo viejo**, si no están. Es
-lo que impide que el secreto vuelva por la puerta de atrás.
+2. **Crear la service account nueva**, dedicada al Worker, y darle acceso a los
+   calendarios de los barberos.
 
-**2. Crear la clave nueva** (necesita `gcloud` autenticado):
+3. **Borrar la vieja entera** (`barberia-worker@calendar-barberias`), no solo su
+   clave: estuvo expuesta y no se reusa.
 
-```bash
-gcloud config set project calendar-barberias
-gcloud iam service-accounts keys create ~/gebyanos-sa-nueva.json \
-  --iam-account=barberia-worker@calendar-barberias.iam.gserviceaccount.com
-```
+4. **Cargar `GOOGLE_SA_EMAIL` y `GOOGLE_SA_PRIVATE_KEY`** como secrets del
+   Worker. Son **dos secrets separados**, no el JSON entero — ver el docstring
+   de `src/services/gcal.ts`.
 
-**3. Cargarla en el Worker** — son dos secrets separados, no el JSON entero
-(ver el docstring de `src/services/gcal.ts`):
-
-```bash
-cd gebyanos-barberia
-printf '%s' "barberia-worker@calendar-barberias.iam.gserviceaccount.com" \
-  | npx wrangler secret put GOOGLE_SA_EMAIL
-python3 -c "import json;print(json.load(open('$HOME/gebyanos-sa-nueva.json'))['private_key'],end='')" \
-  | npx wrangler secret put GOOGLE_SA_PRIVATE_KEY
-```
-
-**4. Revocar la vieja** — recién después de confirmar que lo nuevo anda:
-
-```bash
-gcloud iam service-accounts keys delete a61a25d618c32b7895c88d295ed6e45c29f90262 \
-  --iam-account=barberia-worker@calendar-barberias.iam.gserviceaccount.com
-```
-
-**5. Borrar el JSON descargado** (`rm ~/gebyanos-sa-nueva.json`) y verificar con
-`gcloud iam service-accounts keys list` que solo queda la nueva.
+5. **Borrar el JSON descargado** de la máquina.
 
 ---
 
@@ -597,21 +579,85 @@ a las 14:00. Las cuatro preguntas concretas:
 No inventarlo: un placeholder que nadie corrigió es peor que un día cerrado,
 porque el día cerrado se ve en el panel y el turno fantasma no.
 
-## 2. ¿Migrar los datos de Azure? — primero hay que saber si hay datos
+## 2. ✅ Migrar los datos de Azure — CERRADO, no hay nada que migrar
 
-**La pregunta previa es si Gebyanos sigue usando el sistema viejo con turnos
-reales.** Si quedó abandonado, no hay nada que migrar y esto se cierra sin
-trabajo.
+Azure **no tiene clientes reales**. No hay export/import, ni ventana de
+cutover, ni mapeo de IDs. `Barberia.Migrator/` no se usa.
 
-Si sigue vivo, hace falta:
+---
 
-- un script de export/import (`Barberia.Migrator/` tiene el molde del mapeo de
-  IDs en la dirección inversa);
-- una ventana de cutover, porque las reservas nuevas que entren durante la
-  migración se pierden;
-- decidir qué se migra: clientes y reservas futuras seguro; el historial de
-  reservas pasadas es opcional y es el grueso del volumen.
+# 🔴 Producción está 15 commits atrás — la causa de casi todo
 
-Esta pregunta **bloquea la rotación de la credencial de Google** (ver el orden
-más arriba): si el sistema viejo está vivo, revocar la clave le corta la
-sincronización de Calendar al cliente.
+Verificado el 2026-08-18 pegándole a
+`https://gebyanos-barberia.valorsolutions.workers.dev`, no leyendo el código.
+
+**Último deploy: `2026-08-17T21:56:24Z`, o sea el commit `f904f61` — el final
+de la Fase 2.** Todo lo de las Fases 3, 4 y 5 está commiteado y en verde, y
+**nada de eso está corriendo**.
+
+## Lo que explica
+
+| Síntoma observado | Causa |
+|---|---|
+| `/api/mi-turno` → 404 con y sin token | Las rutas de la Fase 5 no están en el build desplegado. El path del contrato es correcto |
+| `/api/negocio` sigue devolviendo `timezone` | La quita (`c56717f`) es posterior al deploy |
+| `/api/servicios`, `/promos`, `/catalogo` → `[]` | **Otra causa distinta: la base está vacía.** Ver abajo |
+
+**El contrato no miente.** `POST /api/mi-turno/buscar` también da 404 en
+producción y existe en el código: es drift de despliegue, no de rutas.
+
+## Estado real de los datos en producción
+
+```
+servicios: 0    promos: 0    catalogo: 0
+barberos:  1 (gaby)          reservas: 0     horarios: 7
+```
+
+Los catálogos **nunca se sembraron**. `src/db/seed.sql` es solo local por regla,
+y los endpoints del panel que permiten cargarlos (tarea 3.4) tampoco están
+desplegados. O sea que hoy no hay ninguna forma de crear un servicio en
+producción, ni por API ni por seed.
+
+## ¿Acepta reservas hoy?
+
+**En teoría sí, en la práctica no.**
+
+`servicioId` es obligatorio *como campo* (falta → `servicioId es obligatorio.`),
+pero un `servicioId` **inexistente no rechaza**: el paso 7 cae a
+`SERVICIO_DESCONOCIDO` (`"Servicio"`) y a la duración global. Es deliberado —
+un servicio dado de baja no debería impedir reservar.
+
+Así que un POST con cualquier string no vacío entra. Pero el cliente **no tiene
+de dónde sacar un id**: el flujo público arranca en `GET /api/servicios`, que
+devuelve `[]`. El flujo muere en el paso 1, no en el POST.
+
+## Por qué ningún test lo detectó
+
+Tres respuestas distintas, y solo una es un hueco de cobertura real.
+
+**1. El drift de despliegue es invisible al suite, por construcción.** Los tests
+corren contra el código local. Ninguno puede saber qué versión está publicada.
+Esto no se arregla con un test: se arregla con un smoke check post-deploy contra
+la URL real.
+
+**2. La base vacía tampoco es detectable por un test.** Cada test siembra sus
+propios `servicios`. Un fixture no observa el estado de producción.
+
+**3. El hueco real: ningún test recorre el flujo público de punta a punta
+usando SOLO la API.** Todos los tests de reserva se inyectan un `servicioId`
+que acaban de crear. Un test que hiciera
+`GET /api/servicios` → `GET /api/disponibilidad` → `POST /api/reservas`,
+usando únicamente lo que devuelve la API, fallaría con el catálogo vacío — y es
+exactamente el recorrido que hace el frontend.
+
+**Y una cuarta que no es de los tests sino mía:** reporté la Fase 5 como
+terminada sin verificar que estuviera desplegada. Confundí "el suite está en
+verde" con "está vivo". El suite nunca afirmó lo segundo.
+
+## Qué hacer
+
+1. Un test del flujo público completo que use solo la API (cierra el hueco 3).
+2. Un smoke check post-deploy contra la URL real: `/health`, `/api/servicios`
+   no vacío, `/api/mi-turno` respondiendo 401 y no 404 (cierra el 1 y el 2).
+3. Sembrar los catálogos de producción — una vez que la 3.4 esté desplegada,
+   se puede hacer desde el panel.
