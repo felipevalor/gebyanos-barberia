@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { fail } from './api';
+import { sinCache } from './middleware/cache';
 import { publicRoutes } from './routes/public';
 import { adminRoutes } from './routes/admin';
 import { miTurnoRoutes } from './routes/mi-turno';
@@ -28,6 +29,7 @@ const DEPLOYED_AT = typeof __DEPLOYED_AT__ === 'string' ? __DEPLOYED_AT__ : 'des
 
 const app = new Hono<{ Bindings: Env }>();
 
+
 /**
  * `GET /health` — la sonda de DRIFT, no solo de vida.
  *
@@ -40,7 +42,14 @@ const app = new Hono<{ Bindings: Env }>();
  *
  * `desconocido` significa que se buildeo sin el `--define`, o sea `npm run dev`.
  */
-app.get('/health', (c) =>
+/**
+ * ⚠️ `sinCache()` EXPLICITO, aunque el default ya lo cubra.
+ *
+ * Es el unico endpoint donde una respuesta vieja es activamente dañina: miente
+ * sobre qué version esta corriendo, que es exactamente lo que vino a detectar.
+ * La intencion tiene que leerse en la ruta y no depender de un default.
+ */
+app.get('/health', sinCache(), (c) =>
   c.json({ ok: true, version: VERSION, deployedAt: DEPLOYED_AT }, 200),
 );
 
@@ -48,20 +57,32 @@ app.route('/api', publicRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/mi-turno', miTurnoRoutes);
 
-app.notFound((c) => c.json(fail('No encontrado.'), 404));
+/**
+ * ⚠️ `no-store` A MANO. El `notFound` no pasa por ningun router, asi que sin
+ * esto sale sin `Cache-Control` y un CDN aplica su heuristica: un 404 cacheado
+ * durante un despliegue a medias deja la landing rota hasta que expire un TTL
+ * que nadie eligio.
+ */
+app.notFound((c) =>
+  c.json(fail('No encontrado.'), 404, { 'Cache-Control': 'no-store' }),
+);
 
 app.onError((err, c) => {
   console.error('error no controlado', err);
 
   // El mensaje de 500 de la reserva es contrato: transcripcion textual.
+  // Igual que el notFound: un 500 cacheado es peor que el 500.
+  const sinGuardar = { 'Cache-Control': 'no-store' };
+
   if (c.req.method === 'POST' && c.req.path === '/api/reservas') {
     return c.json(
       fail('Ocurrió un error al procesar la reserva. Por favor, reintentá.'),
       500,
+      sinGuardar,
     );
   }
 
-  return c.json(fail('Error interno.'), 500);
+  return c.json(fail('Error interno.'), 500, sinGuardar);
 });
 
 export default {

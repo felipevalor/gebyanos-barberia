@@ -44,3 +44,24 @@ export const sinCache = () =>
     await next();
     c.res.headers.set('Cache-Control', 'no-store');
   });
+
+/**
+ * ⚠️ NO HAY DEFAULT GLOBAL: las tres rutas del `app` raiz lo declaran a mano.
+ *
+ * `/health`, el `notFound` y el `onError` no pasan por ningun router, asi que
+ * salian SIN NINGUN `Cache-Control`. Sin el header, cualquier intermediario
+ * —browser, proxy del ISP, CDN— aplica su propia heuristica.
+ *
+ * El que mas duele es `/health`, porque es el detector de drift: se lo vio
+ * servir un body viejo desde otra IP minutos despues de un deploy correcto. El
+ * endpoint construido para avisar que algo no se desplego devolvia exactamente
+ * la respuesta que hace creer eso.
+ *
+ * Se descarto un `app.use('*', ...)` que pusiera `no-store` solo si nadie
+ * habia decidido. No porque no funcione —no se comprobo que falle— sino porque
+ * su correccion depende de un detalle no obvio: que un middleware del `app`
+ * vea los headers que puso un sub-router montado con `app.route()`. Tres
+ * declaraciones explicitas se verifican leyendolas; un default global hay que
+ * ir a comprobarlo, y si algun dia deja de propagarse el sintoma es que los
+ * catalogos dejan de cachearse en silencio.
+ */

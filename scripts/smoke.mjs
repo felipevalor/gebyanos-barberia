@@ -36,11 +36,21 @@ const mal = (m) => {
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Reintenta hasta que `cumple` sea true o se acaben los intentos. */
+/**
+ * Reintenta hasta que `cumple` sea true o se acaben los intentos.
+ *
+ * ⚠️ REPORTA CUANTOS INTENTOS HIZO FALTA. Un verde al sexto intento no es un
+ * verde al primero: esconderlo tapa justo el dato que dice si hubo propagación
+ * lenta o si algo anda al borde.
+ */
 async function conReintento(nombre, hacer, cumple) {
   for (let i = 1; i <= REINTENTOS; i++) {
     const r = await hacer();
-    if (cumple(r)) return r;
+    if (cumple(r)) {
+      if (i > 1) console.log(`  ⚠️  ${nombre}: verde recién al intento ${i}/${REINTENTOS}`);
+      intentosExtra += i - 1;
+      return r;
+    }
     if (i < REINTENTOS) {
       console.log(`  ⏳ ${nombre}: intento ${i}/${REINTENTOS}, esperando propagación…`);
       await dormir(ESPERA_MS);
@@ -49,7 +59,34 @@ async function conReintento(nombre, hacer, cumple) {
   return null;
 }
 
-const pedir = (p, init = {}) => fetch(URL_BASE + p, init);
+/**
+ * ⚠️ CADA REQUEST ROMPE EL CACHE, Y NO ES REDUNDANTE CON EL `no-store` DEL
+ * SERVIDOR.
+ *
+ * El reintento arregla el isolate viejo, pero NO arregla una respuesta
+ * cacheada: reintentar seis veces contra un intermediario devuelve la misma
+ * respuesta vieja seis veces y la reporta como confirmada. Son dos problemas
+ * distintos con dos arreglos distintos.
+ *
+ * Paso de verdad: `/health` salía sin `Cache-Control` y desde otra IP devolvía
+ * el body de antes del deploy. El `no-store` del servidor ya está, pero un
+ * smoke check que confía en que el servidor mande los headers correctos no
+ * puede detectar que el servidor NO los mande.
+ */
+let intentosExtra = 0;
+let cbSeq = 0;
+
+const pedir = (p, init = {}) => {
+  const sep = p.includes('?') ? '&' : '?';
+  const url = `${URL_BASE}${p}${sep}_cb=${Date.now()}-${cbSeq++}`;
+
+  return fetch(url, {
+    ...init,
+    cache: 'no-store',
+    headers: { 'cache-control': 'no-cache', pragma: 'no-cache', ...(init.headers ?? {}) },
+  });
+};
+
 const json = async (p) => (await (await pedir(p)).json()).data;
 
 console.log(`\nSmoke check → ${URL_BASE}\nSHA esperado: ${sha}\n`);
@@ -122,14 +159,36 @@ const link = await pedir('/api/mi-turno/access-link', {
 if (link.status === 500) mal('MAGIC_LINK_SECRET falta o es corta: access-link devuelve 500');
 else ok(`MAGIC_LINK_SECRET presente (access-link → ${link.status}, no 500)`);
 
-// ── 5. el timezone no volvio a la respuesta
-console.log('\n5. Contrato');
+// ── 5. los headers de cache, empezando por el detector
+console.log('\n5. Cache-Control');
+const resSalud = await pedir('/health');
+const ccSalud = resSalud.headers.get('cache-control');
+if (ccSalud === 'no-store') ok('/health declara no-store');
+else mal(`/health tiene Cache-Control "${ccSalud ?? '(ninguno)'}" — el detector de drift se puede servir cacheado`);
+
+const resCatalogo = await pedir('/api/negocio');
+const ccCatalogo = resCatalogo.headers.get('cache-control');
+if (ccCatalogo?.includes('max-age')) ok(`/api/negocio conserva su cache (${ccCatalogo})`);
+else mal(`/api/negocio perdió su Cache-Control: "${ccCatalogo ?? '(ninguno)'}"`);
+
+const res404 = await pedir('/ruta-que-no-existe');
+if (res404.headers.get('cache-control') === 'no-store') ok('el 404 sale no-store');
+else mal('el 404 sale sin no-store: un CDN puede cachearlo');
+
+// ── 6. el timezone no volvio a la respuesta
+console.log('\n6. Contrato');
 const neg = await json('/api/negocio');
 if (neg?.timezone === undefined) ok('/api/negocio no expone timezone');
 else mal('/api/negocio volvió a exponer timezone');
 
 // ── cierre
 console.log('');
+if (intentosExtra > 0) {
+  console.log(
+    `⚠️  ${intentosExtra} reintento(s) hicieron falta. Si acabás de desplegar es propagación;\n` +
+      `   si no, algo está intermitente y vale mirarlo.\n`,
+  );
+}
 if (fallas.length) {
   console.error(`❌ SMOKE CHECK FALLÓ — ${fallas.length} problema(s):`);
   for (const f of fallas) console.error(`   · ${f}`);
