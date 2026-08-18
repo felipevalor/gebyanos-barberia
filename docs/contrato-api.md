@@ -57,6 +57,7 @@ Todavía no existen: integraciones (Fase 4) y la autogestión del cliente
 - [`/api/admin/negocio`](#apiadminnegocio)
 - [`GET /api/admin/stats`](#get-apiadminstats)
 - [`GET /api/admin/avisos-fallidos`](#get-apiadminavisos-fallidos)
+- [`/api/admin/callmebot`](#apiadmincallmebot)
 
 - [Todos los mensajes de error](#todos-los-mensajes-de-error)
 - [Flujo completo de reserva](#flujo-completo-de-reserva)
@@ -1426,3 +1427,70 @@ del texto como hacía el sistema viejo:
 
 `recurrente` comparte título con `creada` a propósito: para el barbero es una
 reserva nueva igual, y se distingue por la nota.
+
+---
+
+# `/api/admin/callmebot` (tarea 4.3)
+
+Configuración de WhatsApp por barbero. Scoped como la agenda: un barbero
+configura la suya, el `owner` la de cualquiera con `?barberoId=`.
+
+## 🔴 La API key NUNCA sale en una respuesta
+
+Ni en el `GET`, ni en el `PUT`, ni en el mensaje de error del `test`.
+
+```json
+{ "ok": true, "data": {
+  "barberoId": "…",
+  "telefono": "+5493416513207",
+  "tieneApikey": true,
+  "pistaApikey": "••••9876"
+} }
+```
+
+`pistaApikey` son los **últimos 4 caracteres de la key en claro** — alcanzan
+para que el barbero reconozca cuál cargó, no para usarla. Devolver la key
+entera "para que pueda verificarla" convierte cualquier XSS en el panel en una
+filtración de credenciales.
+
+En la base se guarda cifrada con AES-GCM, formato `v1:<iv>:<ciphertext>`. Un
+`SELECT` no la muestra.
+
+## `PUT /api/admin/callmebot`
+
+Body `{ telefono?, apikey?, barberoId? }`. **Es parcial**, y la distinción
+importa:
+
+| Campo | Efecto |
+|---|---|
+| ausente | no se toca |
+| `null` o `""` | se borra |
+| un valor | se reemplaza |
+
+El panel **no tiene** la key —nunca se la devolvimos— así que no puede
+reenviarla. Si el `PUT` parcial la borrara, sería imposible editar el teléfono
+sin perder la key.
+
+`telefono` tiene que ser formato internacional (`^\+?\d{7,15}$`), si no da 400
+con `Número inválido. Usá formato internacional, ej: +5491122334455 (país 54 +
+9 + área + número).`
+
+## `POST /api/admin/callmebot/test`
+
+Manda un mensaje de prueba y devuelve **el resultado real del envío**.
+
+```json
+{ "ok": true, "data": { "enviado": false, "motivo": "APIKey is invalid. Please create a new one" } }
+```
+
+**Responde 200 aunque el envío falle**, con `enviado: false`. La operación de
+diagnóstico funcionó; lo que falló es el envío. Un 500 haría pensar que se
+rompió el panel.
+
+**Mostrá el `motivo` tal cual.** Es la herramienta de diagnóstico del barbero:
+`not registered` se arregla registrando el número en el bot, `APIKey is
+invalid` renovando la key. El motivo viene con la key y los teléfonos ya
+redactados.
+
+Sin configurar da 400 con `Configurá primero el número y la API key de
+CallMeBot para poder probarlos.` y no dispara ningún request.

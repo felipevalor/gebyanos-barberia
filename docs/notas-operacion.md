@@ -369,3 +369,36 @@ sea un secreto:
 - de los teléfonos se loguean sólo los últimos 4 dígitos.
 
 Hay un test que falla si cualquiera de esas tres cosas se rompe.
+
+
+---
+
+## `ENCRYPTION_KEY` es obligatoria y su ausencia es un fallo ruidoso
+
+Cifra las API keys de CallMeBot (AES-GCM 256). **Sin ella, el `PUT` de
+`/api/admin/callmebot` devuelve 500 y no guarda nada.**
+
+Es deliberado. La alternativa —caer a una clave por defecto o vacía— produce
+datos que *parecen* cifrados y no lo están: se descubre tarde, con la base
+entera comprometida. Un 500 con un mensaje que dice qué hacer se arregla en un
+minuto:
+
+```bash
+wrangler secret put ENCRYPTION_KEY
+```
+
+Puede ser cualquier string: se le aplica SHA-256 para llegar a los 32 bytes que
+AES-256 necesita, así que no hace falta generarla en un formato particular.
+
+### Rotarla invalida las keys guardadas
+
+No hay re-cifrado automático. Si se cambia `ENCRYPTION_KEY`, las
+`callmebot_apikey` existentes dejan de descifrarse: `descifrar` devuelve `null`
+y el sistema degrada a "este barbero no tiene credencial" — no explota, pero
+los avisos dejan de salir en silencio. Hay que volver a cargarlas desde el
+panel.
+
+El formato lleva prefijo de versión (`v1:iv:ciphertext`) para poder rotar el
+**esquema** sin migrar todo de golpe. Rotar la **clave** es otra cosa y hoy no
+está resuelto: si llega a hacer falta, el camino es un `v2` que intente primero
+la clave nueva y caiga a la vieja.

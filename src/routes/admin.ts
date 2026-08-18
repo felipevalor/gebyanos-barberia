@@ -121,6 +121,14 @@ import {
   listarAvisosFallidos,
   descartarAvisoFallido,
 } from '../services/notificaciones';
+import {
+  leerConfig,
+  guardarConfig,
+  probarEnvio,
+  type EntradaCallmebot,
+  ERROR_BARBERO_NO_ENCONTRADO as ERROR_BARBERO_CALLMEBOT,
+  ERROR_SIN_CONFIGURACION as ERROR_CALLMEBOT_SIN_CONFIG,
+} from '../services/callmebot';
 import { chequearDesactivarBarbero, chequearBorrarBarbero } from '../services/conflictos';
 import { todayArgentina } from '../domain/dates';
 
@@ -916,6 +924,70 @@ adminRoutes.delete('/avisos-fallidos/:id', requiereAuth, async (c) => {
   if (!borrado) return c.json(fail('Aviso no encontrado.'), 404);
 
   return c.json(ok(null), 200);
+});
+
+// ------------------------------------------------------- CallMeBot (4.3)
+
+/**
+ * Configuracion de WhatsApp por barbero.
+ *
+ * Scoped como la agenda: un barbero configura la suya, el owner la de
+ * cualquiera. ⚠️ La API KEY NUNCA sale en la respuesta — solo `tieneApikey` y
+ * una pista de cuatro caracteres.
+ */
+adminRoutes.get('/callmebot', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
+  const config = await leerConfig(c.env, barberoId);
+
+  if (!config) return c.json(fail(ERROR_BARBERO_CALLMEBOT), 404);
+  return c.json(ok(config), 200);
+});
+
+adminRoutes.put('/callmebot', requiereAuth, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const objetivo = resolverBarbero(c.get('sesion'), (cuerpo as { barberoId?: string }).barberoId);
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
+
+  const r = await guardarConfig(c.env, barberoId, cuerpo as EntradaCallmebot);
+
+  if (r.estado === 'noEncontrado') return c.json(fail(ERROR_BARBERO_CALLMEBOT), 404);
+  if (r.estado === 'error') return c.json(fail(r.error), 400);
+  return c.json(ok(r.config), 200);
+});
+
+/**
+ * Manda un mensaje de prueba y devuelve el ERROR REAL de CallMeBot.
+ *
+ * Es la herramienta de diagnostico del barbero: tiene que poder leer
+ * "APIKey is invalid" y no un "no se pudo enviar" que no le dice qué arreglar.
+ */
+adminRoutes.post('/callmebot/test', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
+  const r = await probarEnvio(c.env, barberoId);
+
+  switch (r.estado) {
+    case 'enviado':
+      return c.json(ok({ enviado: true }), 200);
+    case 'sinConfigurar':
+      return c.json(fail(ERROR_CALLMEBOT_SIN_CONFIG), 400);
+    case 'noEncontrado':
+      return c.json(fail(ERROR_BARBERO_CALLMEBOT), 404);
+    default:
+      // 200 con `enviado: false`: la operacion de diagnostico funciono, lo que
+      // fallo es el envio. Un 500 haria pensar que se rompio el panel.
+      return c.json(ok({ enviado: false, motivo: r.motivo }), 200);
+  }
 });
 
 export { DURACION_SESION_MS };

@@ -4,6 +4,7 @@ import { publicRoutes } from './routes/public';
 import { adminRoutes } from './routes/admin';
 import { miTurnoRoutes } from './routes/mi-turno';
 import { procesarBatch } from './services/notificaciones';
+import { apikeyDe } from './services/callmebot';
 
 /** 21:00 ART — recordatorios de los turnos del dia siguiente. */
 const HORA_UTC_RECORDATORIOS = 0;
@@ -70,7 +71,9 @@ export default {
    * 2026, y el binding nunca estuvo comentado en wrangler.jsonc.
    */
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext) {
-    await procesarBatch(env, batch);
+    // El descifrado se INYECTA para que `notificaciones` no dependa del
+    // esquema de cifrado: la cola no tiene por que saber como se guarda la key.
+    await procesarBatch(env, batch, (guardada) => apikeyDe(env, guardada));
   },
 } satisfies ExportedHandler<Env>;
 

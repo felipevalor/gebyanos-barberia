@@ -373,3 +373,25 @@ normalizar el pasaje de medianoche: un turno de 23:30 + 30 min produce
 la Fase 1 ya rota al día siguiente y tiene tests de eso
 (`2027-04-01T23:30 + 30 → 2027-04-02T00:00:00-03:00`). No hay nada que
 arreglar, queda anotado para que no se "corrija" hacia el comportamiento viejo.
+
+---
+
+## Tarea 4.3 — rotar `ENCRYPTION_KEY` no está resuelto
+
+El formato `v1:iv:ciphertext` permite rotar el **esquema** de cifrado sin
+migrar todo de golpe. Rotar la **clave maestra** es un problema distinto y hoy
+no tiene solución: cambiarla deja las `callmebot_apikey` existentes
+indescifrables, y el sistema degrada a "sin credencial" **en silencio** — los
+avisos dejan de salir y nadie recibe un error.
+
+Mitigación actual: ninguna, más allá de que no explota. Hay que volver a cargar
+las keys desde el panel.
+
+Si alguna vez hace falta rotar de verdad, el camino es un `v2` que intente
+primero con la clave nueva y caiga a la vieja, más un job que reescriba las
+filas. No se implementó porque hoy hay una sola barbería y dos barberos.
+
+**Lo que sí conviene agregar antes:** que el panel muestre un cartel cuando
+`tieneApikey` es `true` pero `pistaApikey` es `null`. Esa combinación significa
+exactamente "hay una key guardada que no se puede descifrar", que es el síntoma
+de una clave maestra rotada o mal configurada.
