@@ -671,3 +671,25 @@ verde" con "está vivo". El suite nunca afirmó lo segundo.
    no vacío, `/api/mi-turno` respondiendo 401 y no 404 (cierra el 1 y el 2).
 3. Sembrar los catálogos de producción — una vez que la 3.4 esté desplegada,
    se puede hacer desde el panel.
+
+---
+
+## ⚠️ Antes de cargar el PRIMER recurrente activo — revisar la idempotencia
+
+El cron de recurrentes es **el único de los cuatro jobs que crea datos**. Hoy es
+inofensivo por una razón que no va a durar: **hay 0 recurrentes activos**, así
+que su idempotencia real es "no hay nada que generar".
+
+En cuanto exista el primero, eso deja de ser cierto y pasa a depender enteramente
+de los dos chequeos de la tarea 5.2:
+
+1. `ultimo_turno_fecha >= fecha` — en memoria, corta antes de la query
+2. una reserva activa con el mismo `turno_auto_iso` — mira la agenda real
+
+**Revisalos antes de cargar el primero, no después.** El cron corre todos los
+días: si la idempotencia falla, el síntoma es un turno duplicado por día en la
+agenda del barbero, y para cuando alguien lo note ya hay varios.
+
+Verificación mínima antes de habilitarlo: cargar un recurrente activo, correr el
+cron dos veces seguidas a mano, y confirmar que la segunda corrida reporta
+`generados: 0` y no deja una segunda reserva.
