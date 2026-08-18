@@ -2,7 +2,8 @@ import { and, eq, gte, lte, asc } from 'drizzle-orm';
 import { db } from '../db/client';
 import { feriadosOverride } from '../db/schema';
 import { uuidv7 } from '../db/id';
-import { feriadosNacionales, type FeriadoNacional } from '../integrations/feriados-nacionales';
+import { type FeriadoNacional } from '../integrations/feriados-nacionales';
+import { feriadosDelAnio } from './cron';
 
 /**
  * Feriados: dos cosas distintas que el panel muestra juntas.
@@ -69,12 +70,15 @@ export async function listarFeriados(
   barberoId: string,
   anio: number,
 ): Promise<FeriadosDelAnio> {
-  const [nacionales, propios] = await Promise.all([
-    feriadosNacionales(anio),
+  // Pasa por KV: sin el cache, cada apertura de la pantalla de feriados
+  // dispara un request a un servicio de terceros, y si ese servicio esta caido
+  // la pantalla aparece vacia aunque tengamos la copia del mes pasado.
+  const [cache, propios] = await Promise.all([
+    feriadosDelAnio(env, anio),
     listarOverrides(env, barberoId, anio),
   ]);
 
-  return { anio, nacionales, propios };
+  return { anio, nacionales: cache.feriados, propios };
 }
 
 /**

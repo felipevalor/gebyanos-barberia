@@ -402,3 +402,56 @@ El formato lleva prefijo de versión (`v1:iv:ciphertext`) para poder rotar el
 **esquema** sin migrar todo de golpe. Rotar la **clave** es otra cosa y hoy no
 está resuelto: si llega a hacer falta, el camino es un `v2` que intente primero
 la clave nueva y caiga a la vieja.
+
+
+---
+
+## La caché de feriados: el TTL de KV NO es la ventana de frescura
+
+La spec de la 4.4 pide dos cosas que, tomadas literalmente, se contradicen:
+
+1. "guardar en KV con **TTL de 24 h**"
+2. "si la API externa está caída, **servir lo que haya en KV aunque esté
+   vencido**"
+
+Con `expirationTtl: 86400` la segunda es **imposible**: a las 24 h KV borra la
+entrada, y lo vencido no existe para servirlo. Justo el día en que la API de
+terceros se cae más de un día —que es exactamente cuando el fallback importa—
+no queda nada.
+
+Se resolvió separando las dos ideas:
+
+| Concepto | Valor | Dónde vive |
+|---|---|---|
+| Frescura | 24 h | `frescoHastaMs`, dentro del valor |
+| Retención | 30 días | `expirationTtl` de KV |
+
+**Vencido significa "intentá refrescarlo", no "tiralo".** El orden de
+preferencia es: caché fresco → API → **caché vencido** → vacío.
+
+Es mejor un feriado desactualizado que un panel roto: los feriados nacionales
+de un año casi no cambian, así que servir la copia del mes pasado es
+prácticamente inofensivo. Que la pantalla aparezca vacía porque un servicio
+ajeno está caído, no.
+
+### El job fuerza el refresco
+
+`refrescarFeriadosForzado` ignora la frescura a propósito. Si respetara la
+ventana de 24 h, un cron que corre una vez por día encontraría la caché todavía
+fresca por unos minutos y **no refrescaría nunca**.
+
+### Los cuatro jobs en un solo cron
+
+Los Cron Triggers son **5 por cuenta** en el plan Free, no por Worker. El único
+trigger horario (`0 * * * *`) despacha por hora UTC:
+
+| Hora UTC | Hora ART | Job |
+|---|---|---|
+| todas | todas | limpieza de sesiones y magic links vencidos |
+| 06:00 | 03:00 | refresco de la caché de feriados |
+| 00:00 | 21:00 | recordatorios *(Fase 4, pendiente)* |
+| 09:00 | 06:00 | generación de recurrentes *(Fase 5)* |
+
+**Cada job va en su propio `try`.** Un cron que se cae entero por un error en
+la limpieza dejaría de refrescar los feriados sin que nadie relacione las dos
+cosas.

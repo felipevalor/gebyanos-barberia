@@ -532,6 +532,10 @@ describe('feriados', () => {
       return fetchOriginal(url as never);
     }) as typeof fetch;
 
+    // Sin cache previo: es lo que aisla este caso del fallback de la 4.4, que
+    // serviria la copia vieja y haria pasar el test por el motivo equivocado.
+    await env.CACHE.delete(`feriados:${FUTURO.slice(0, 4)}`);
+
     try {
       await pedir('/api/admin/feriados', {
         metodo: 'POST', cookie, cuerpo: { fecha: FUTURO, trabaja: false },

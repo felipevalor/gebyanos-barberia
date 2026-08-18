@@ -216,6 +216,16 @@ Solo dueño. Barberos, servicios, promos, catálogo, y la configuración del neg
 
 **Servicios:** el nombre es único. Cambiar la duración **no afecta los turnos ya creados** (tienen su copia). Decilo, porque no es obvio.
 
+### La pantalla de WhatsApp tiene dos estados que hay que renderizar
+
+**Avisos que no salieron.** `GET /api/admin/avisos-fallidos` devuelve las notificaciones que fallaron, con el motivo. **Mostralas** — todo el mecanismo de registro existe para que el barbero se entere de un turno que no le llegó. Si el panel no las muestra, el aviso perdido sigue siendo invisible y el diseño no sirvió de nada. Que se puedan marcar como vistas (`DELETE`).
+
+🔴 **Credencial ilegible.** Hay una combinación que significa "el sistema no puede leer tu clave de WhatsApp": `tieneApikey: true` junto con `pistaApikey: null`.
+
+Pasa cuando se rotó la clave maestra de cifrado y las credenciales guardadas quedaron indescifrables. **El síntoma sin esto es silencioso**: los avisos dejan de salir y nadie ve un error en ningún lado.
+
+Cuando detectes esa combinación, mostrá algo accionable: *"No podemos leer tu clave de WhatsApp. Cargala de nuevo."* No un estado vacío ni un "configurado" que miente.
+
 **Criterios de aceptación:**
 
 - [ ] Un `barbero` no llega a estas pantallas
@@ -224,6 +234,8 @@ Solo dueño. Barberos, servicios, promos, catálogo, y la configuración del neg
 - [ ] Un nombre de servicio duplicado muestra un error claro
 - [ ] La interfaz aclara que cambiar la duración no altera turnos existentes
 - [ ] El branding se aplica al sitio público sin recompilar
+- [ ] Los avisos fallidos se muestran con su motivo y se pueden marcar como vistos
+- [ ] `tieneApikey: true` + `pistaApikey: null` muestra que la credencial no se puede leer, con la acción de recargarla
 
 ---
 

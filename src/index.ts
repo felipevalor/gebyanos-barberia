@@ -5,9 +5,12 @@ import { adminRoutes } from './routes/admin';
 import { miTurnoRoutes } from './routes/mi-turno';
 import { procesarBatch } from './services/notificaciones';
 import { apikeyDe } from './services/callmebot';
+import { limpiarVencidos, refrescarFeriadosForzado } from './services/cron';
 
 /** 21:00 ART — recordatorios de los turnos del dia siguiente. */
 const HORA_UTC_RECORDATORIOS = 0;
+/** 03:00 ART — refresco de la cache de feriados nacionales. */
+const HORA_UTC_FERIADOS = 6;
 /** 06:00 ART — generacion de los turnos recurrentes. */
 const HORA_UTC_RECURRENTES = 9;
 
@@ -48,11 +51,29 @@ export default {
    * Los crons corren en UTC; Argentina es UTC-3 fijo (sin DST).
    * Implementaciones: Fase 4 (recordatorios) y Fase 5 (recurrentes).
    */
-  async scheduled(controller: ScheduledController, _env: Env, _ctx: ExecutionContext) {
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
     const horaUtc = new Date(controller.scheduledTime).getUTCHours();
+    const ahora = new Date(controller.scheduledTime);
 
-    // Cada hora: limpieza de sesiones y magic links vencidos.
-    console.log('cron: limpieza (no implementado)');
+    // ⚠️ Cada job en su propio try: uno que falle no puede impedir que corran
+    // los otros. Un cron que se cae entero por un error en la limpieza dejaria
+    // de refrescar los feriados sin que nadie relacione las dos cosas.
+    try {
+      console.log('cron: limpieza', await limpiarVencidos(env, ahora));
+    } catch (e) {
+      console.error('cron: falló la limpieza', e instanceof Error ? e.message : String(e));
+    }
+
+    if (horaUtc === HORA_UTC_FERIADOS) {
+      try {
+        console.log('cron: feriados', await refrescarFeriadosForzado(env, ahora));
+      } catch (e) {
+        console.error(
+          'cron: falló el refresco de feriados',
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
 
     if (horaUtc === HORA_UTC_RECORDATORIOS) {
       console.log('cron: recordatorios (no implementado)');
