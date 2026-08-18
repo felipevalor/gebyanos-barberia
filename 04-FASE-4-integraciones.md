@@ -221,12 +221,31 @@ El `test` manda un mensaje de prueba y devuelve el resultado real del envío, co
 
 ## Tarea 4.4 — Tareas programadas
 
-Dos Cron Triggers en esta fase. El tercero (generación de recurrentes) va en la Fase 5. Free plan permite 5 en total.
+Dos tareas en esta fase. La tercera (generación de recurrentes) va en la Fase 5.
 
-| Cron | Qué hace |
+| Cuándo | Qué hace |
 |---|---|
-| `0 * * * *` | Limpieza: `admin_sessions` con `expires_at < now` y `magic_link_tokens` vencidos |
-| `0 3 * * *` | Refrescar la caché KV de feriados nacionales |
+| Cada hora | Limpieza: `admin_sessions` con `expires_at < now` y `magic_link_tokens` vencidos |
+| Una vez por día | Refrescar la caché KV de feriados nacionales |
+
+**Un solo Cron Trigger con despacho interno por hora**, no tres triggers. El plan gratuito da 5 por cuenta (no por Worker), así que con tres por instancia entraría una sola barbería. Con uno entran cinco. Ver Fase 6.
+
+🚫 **No hay job de recordatorios a clientes, y no se puede haber.**
+
+Si aparece un slot de cron llamado así, es un resto del andamio — sacalo. El impedimento es del canal, no de prioridades: **CallMeBot exige que el destinatario haya autorizado al bot y tenga su propia API key.** No se puede mandar a un número arbitrario.
+
+El sistema viejo tiene la función escrita y es un no-op en la práctica:
+
+```csharp
+if (string.IsNullOrWhiteSpace(telefonoCliente) || string.IsNullOrWhiteSpace(apiKeyCliente))
+    return;   // el cliente nunca tiene apiKey → nunca envía
+```
+
+Todo el WhatsApp de este sistema va **al barbero**, que configuró su propia credencial. Recordatorios al cliente necesitarían otro canal —WhatsApp Business API, SMS o mail— y eso es otro proyecto, no una tarea de esta fase.
+
+### El corte de la limpieza
+
+Usá `expires_at < ahora` **estricto**, para que coincida con el `> ahora` de la búsqueda de sesión. Con `<=` habría un instante donde una sesión ya no sirve para entrar y todavía no se limpia.
 
 ### Limpieza
 
@@ -234,13 +253,30 @@ Borrado físico, son datos efímeros. Sin soft delete acá.
 
 ### Caché de feriados
 
-Consultar `https://api.argentinadatos.com/v1/feriados/{año}` y guardar en KV con **TTL de 24 h**.
-
-Traé el año actual y el siguiente — en diciembre la gente reserva para enero.
+Consultar `https://api.argentinadatos.com/v1/feriados/{año}`. Traé el **año actual y el siguiente** — en diciembre la gente reserva para enero, y sin el año próximo el panel de feriados queda vacío justo cuando se lo necesita.
 
 El sistema viejo cachea en memoria del proceso sin TTL. En Workers no hay memoria persistente, así que KV es el reemplazo.
 
-**Si la API externa está caída:** servir lo que haya en KV aunque esté vencido, y loguear. Es mejor un feriado desactualizado que un panel roto.
+⚠️ **Separá la retención de la frescura. No son lo mismo y confundirlas rompe el fallback.**
+
+Si guardás con `expirationTtl: 86400`, a las 24 horas KV **borra** la entrada — y entonces "servir lo vencido cuando la API está caída" es imposible, porque lo vencido ya no existe. Justo el día que la API de terceros se cae más de un día, que es exactamente cuando el fallback importa, no queda nada.
+
+| Concepto | Valor | Dónde vive |
+|---|---|---|
+| **Retención** | 30 días | `expirationTtl` de KV |
+| **Frescura** | 24 h | Un timestamp **dentro del valor guardado** |
+
+Vencido significa *"intentá refrescarlo"*, no *"tiralo"*.
+
+**El orden de resolución:**
+
+```
+caché fresco → API externa → caché vencido → vacío
+```
+
+**Y el cron fuerza el refresco, no respeta la frescura.** Si la respetara, un job que corre una vez por día encontraría el caché fresco por unos minutos y no refrescaría nunca.
+
+Cuando se sirve caché vencido, logueá — es señal de que la API externa lleva más de un día caída.
 
 **Criterios de aceptación:**
 

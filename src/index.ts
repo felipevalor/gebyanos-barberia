@@ -7,8 +7,6 @@ import { procesarBatch } from './services/notificaciones';
 import { apikeyDe } from './services/callmebot';
 import { limpiarVencidos, refrescarFeriadosForzado } from './services/cron';
 
-/** 21:00 ART — recordatorios de los turnos del dia siguiente. */
-const HORA_UTC_RECORDATORIOS = 0;
 /** 03:00 ART — refresco de la cache de feriados nacionales. */
 const HORA_UTC_FERIADOS = 6;
 /** 06:00 ART — generacion de los turnos recurrentes. */
@@ -49,7 +47,11 @@ export default {
    * de una sola.
    *
    * Los crons corren en UTC; Argentina es UTC-3 fijo (sin DST).
-   * Implementaciones: Fase 4 (recordatorios) y Fase 5 (recurrentes).
+   *
+   * 🚫 NO HAY JOB DE RECORDATORIOS AL CLIENTE, y no es un olvido: CallMeBot
+   * exige que el DESTINATARIO haya autorizado al bot y tenga su propia API
+   * key, asi que no se le puede escribir a un numero de cliente cualquiera.
+   * Todo el WhatsApp de este sistema va al BARBERO. Ver docs/pendientes.md.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext) {
     const horaUtc = new Date(controller.scheduledTime).getUTCHours();
@@ -73,10 +75,6 @@ export default {
           e instanceof Error ? e.message : String(e),
         );
       }
-    }
-
-    if (horaUtc === HORA_UTC_RECORDATORIOS) {
-      console.log('cron: recordatorios (no implementado)');
     }
 
     if (horaUtc === HORA_UTC_RECURRENTES) {

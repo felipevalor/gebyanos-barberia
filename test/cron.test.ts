@@ -286,7 +286,6 @@ describe('despacho del cron horario', () => {
 
     expect(logs.some((l) => l.includes('limpieza'))).toBe(true);
     expect(logs.some((l) => l.includes('feriados'))).toBe(false);
-    expect(logs.some((l) => l.includes('recordatorios'))).toBe(false);
     expect(logs.some((l) => l.includes('recurrentes'))).toBe(false);
   });
 
@@ -298,10 +297,13 @@ describe('despacho del cron horario', () => {
     expect(logs.some((l) => l.includes('limpieza'))).toBe(true);
   });
 
-  it('corre los recordatorios a las 00:00 UTC (21:00 ART)', async () => {
+  it('🚫 a las 00:00 UTC solo corre la limpieza: no hay recordatorios', async () => {
+    // El slot salio del andamio de la 1.1, no de la spec, y CallMeBot no
+    // permite escribirle a un numero de cliente que no autorizo al bot.
     const logs = await correrCron('2027-06-15T00:00:00Z');
-    expect(logs.some((l) => l.includes('recordatorios'))).toBe(true);
+
     expect(logs.some((l) => l.includes('limpieza'))).toBe(true);
+    expect(logs.some((l) => l.includes('recordatorio'))).toBe(false);
   });
 
   it('corre los recurrentes a las 09:00 UTC (06:00 ART)', async () => {

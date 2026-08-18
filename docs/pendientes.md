@@ -395,3 +395,40 @@ filas. No se implementó porque hoy hay una sola barbería y dos barberos.
 `tieneApikey` es `true` pero `pistaApikey` es `null`. Esa combinación significa
 exactamente "hay una key guardada que no se puede descifrar", que es el síntoma
 de una clave maestra rotada o mal configurada.
+
+---
+
+## 💡 Idea post-lanzamiento — recordatorio del turno al cliente
+
+**No es deuda técnica: es una función que hoy no se puede construir.**
+
+Recordarle el turno al cliente el día anterior es lo que más reduce las
+ausencias en cualquier negocio con agenda. Vale tenerlo escrito para cuando
+exista un canal que lo permita.
+
+### Por qué no se puede hoy
+
+**CallMeBot exige que el destinatario haya autorizado al bot y tenga su propia
+API key.** No se le puede escribir a un número arbitrario. Todo el WhatsApp de
+este sistema va **al barbero**, que sí configuró la suya.
+
+La evidencia está en el sistema viejo: `NotificarClienteAsync` existe, está
+escrita, y es un **no-op** — sale por el `return` temprano porque el cliente
+nunca tiene `apiKey`. O sea que ya se intentó y no funcionó.
+
+Por eso tampoco existe el job de recordatorios en el cron: ese slot venía del
+andamio de la tarea 1.1, no de la spec.
+
+### Qué haría falta
+
+Un canal que permita iniciar conversación con un número que no optó in:
+
+- **WhatsApp Business API** (Meta o un proveedor como Twilio): permite
+  plantillas pre-aprobadas hacia números que no escribieron primero. Tiene
+  costo por mensaje y aprobación de plantillas — sale del objetivo $0.
+- **SMS**: más caro por mensaje, sin aprobación previa.
+- **Email**: gratis y sin fricción, pero la tasa de apertura de un recordatorio
+  de turno por mail es mucho más baja que la de un WhatsApp.
+
+Si algún día se agrega, el enganche es limpio: hay un cron horario con despacho
+por hora y la infraestructura de cola ya existe.
