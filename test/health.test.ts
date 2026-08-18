@@ -31,7 +31,9 @@ describe('ruta inexistente', () => {
  * Si esto cambia, el contrato queda mintiendo.
  */
 describe('routers montados pero vacios', () => {
-  for (const ruta of ['/api/admin', '/api/admin/auth', '/api/mi-turno', '/api/mi-turno/abc']) {
+  // `/api/mi-turno` YA NO esta acá: desde la tarea 5.1 tiene rutas propias y
+  // un GET sin token responde 401, no 404.
+  for (const ruta of ['/api/admin', '/api/admin/auth', '/api/mi-turno/abc']) {
     it(`${ruta} responde 404 con el sobre de error`, async () => {
       const ctx = createExecutionContext();
       const res = await worker.fetch(new Request(`http://localhost${ruta}`), env, ctx);
