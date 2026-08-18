@@ -97,3 +97,78 @@ Si Claude Code sugiere pasar a un plan pago, la respuesta es no — hay alternat
 ## Un consejo
 
 Los mensajes de error de estos archivos son transcripción textual del sistema en producción. Cuando Claude Code te los quiera "mejorar", decile que no: el frontend y los tests dependen de ellos.
+
+---
+
+## Emergencia: el owner no puede entrar
+
+**Cuándo aplica.** Un barbero no puede loguearse y no es que se equivoque de
+password:
+
+- su `password_hash` quedó corrupto (vas a ver líneas `HASH_INVALIDO` en
+  `wrangler tail`, con el `barberoId`);
+- o nunca se le cargó una y no hay otro owner que pueda hacerlo;
+- o se perdió la password del único owner.
+
+**Por qué hace falta un procedimiento.** El endpoint que cambia la password
+**exige estar logueado**. Si el que quedó afuera es el único owner, el panel es
+inaccesible y no hay ninguna puerta desde la aplicación. La única salida es
+escribir el hash directo contra la base.
+
+### Los tres pasos
+
+**1. Confirmá que es esto y no otra cosa.** Si es un hash corrupto, el log lo
+dice:
+
+```bash
+./node_modules/.bin/wrangler tail --format pretty | grep HASH_INVALIDO
+```
+
+La línea trae el `barberoId` y el motivo. **Nunca trae el hash ni la
+password** — si aparecieran ahí, eso sería un bug aparte.
+
+**2. Generá el hash nuevo:**
+
+```bash
+node scripts/hash-password.mjs 'una-password-nueva-y-larga'
+```
+
+Mínimo 12 caracteres, igual que el alta normal. El script imprime el hash por
+stdout y el comando listo por stderr.
+
+⚠️ **La password queda en el historial del shell.** Borrala después
+(`history -d`), o poné un espacio adelante del comando si tu shell respeta
+`HISTCONTROL=ignorespace`.
+
+**3. Escribilo. Probá primero en local, sin `--remote`:**
+
+```bash
+./node_modules/.bin/wrangler d1 execute barberia --local --command \
+  "UPDATE barberos SET password_hash = 'pbkdf2$...' WHERE slug = 'gaby'"
+```
+
+y recién después contra producción:
+
+```bash
+./node_modules/.bin/wrangler d1 execute barberia --remote --command \
+  "UPDATE barberos SET password_hash = 'pbkdf2$...' WHERE slug = 'gaby'"
+```
+
+El hash lleva base64, o sea `+`, `/` y `=`. Van bien dentro de comillas simples
+en SQL — verificado con un round-trip contra la base local: vuelve idéntico.
+
+**Después de entrar, cambiá la password desde el panel.** El hash que escribiste
+a mano quedó en el historial del shell y en el buffer de la terminal.
+
+### Por qué el script y no un hash a mano
+
+El formato es `pbkdf2$<iteraciones>$<salt-b64>$<hash-b64>` y tiene que coincidir
+**carácter por carácter** con `src/services/password.ts`: mismo separador, mismo
+esquema, 50.000 iteraciones, SHA-256, salt de 16 bytes y 32 bytes derivados.
+
+Un hash con otra forma **no falla al escribirlo**. Falla después, en el login, y
+para entonces nadie relaciona las dos cosas — te queda un barbero afuera con el
+mismo síntoma que viniste a arreglar.
+
+Hay un test que verifica un hash real generado por el script, y otro que falla
+si las constantes del script y las de `password.ts` se separan.

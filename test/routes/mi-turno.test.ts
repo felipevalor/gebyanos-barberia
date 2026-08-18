@@ -166,6 +166,30 @@ describe('🔴 los diez pasos, en orden', () => {
     expect(espia).not.toHaveBeenCalled();
   });
 
+  it('🔴 3-bis. un secret FALTANTE no se disfraza de firma inválida', async () => {
+    // Era un 401 amable encima de un 500: `claveHmac` tiraba adentro del try y
+    // el catch lo mapeaba a "Firma inválida", o sea a culpa del cliente. Ahora
+    // el error de configuración sale del try y explota.
+    const id = await sembrarTurno();
+    const { token } = await emitirToken(env, id);
+
+    env.MAGIC_LINK_SECRET = '';
+
+    await expect(validarToken(env, token)).rejects.toThrow(/MAGIC_LINK_SECRET/);
+  });
+
+  it('🔴 3-ter. pero el base64 malformado SÍ sigue siendo firma inválida', async () => {
+    // Esa mitad sí es input del usuario: `atob` tira con base64 roto. El try
+    // quedó envolviendo solo eso.
+    const id = await sembrarTurno();
+    const { token } = await emitirToken(env, id);
+    const [payload] = token.split('.');
+
+    const r = await validarToken(env, `${payload}.!!!no-es-base64!!!`);
+
+    expect(r).toEqual({ ok: false, motivo: ERRORES.firma });
+  });
+
   it('3b. un payload alterado invalida la firma', async () => {
     const id = await sembrarTurno();
     const { token } = await emitirToken(env, id);

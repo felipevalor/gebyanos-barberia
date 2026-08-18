@@ -191,18 +191,40 @@ export async function validarToken(
   }
   const [payloadB64, firmaB64] = partes as [string, string];
 
-  // 3. FIRMA. Antes de cualquier acceso a la base.
+  /**
+   * 3. FIRMA. Antes de cualquier acceso a la base.
+   *
+   * ⚠️ `claveHmac` VA FUERA DEL TRY, Y ES EL PUNTO DE ESTE BLOQUE.
+   *
+   * Adentro del try convivian dos clases de error de naturaleza opuesta:
+   *
+   *   - `claveHmac` tira cuando FALTA O ES INVALIDO EL SECRET. Es un error de
+   *     configuracion del servidor.
+   *   - `deB64url` tira cuando el base64 de la firma esta MALFORMADO. Eso sí
+   *     es input del usuario.
+   *
+   * `crypto.subtle.verify` no tira nunca: una firma mala devuelve `false`. Asi
+   * que con los dos adentro, un secret faltante se disfrazaba de
+   * "Firma inválida" — un 401 amable encima de un 500, que es el modo de fallo
+   * mas caro de diagnosticar porque el sintoma apunta al cliente.
+   *
+   * Cuando un try mezcla dos clases de error, el arreglo no es cambiar el
+   * catch: es sacar del try lo que no corresponde.
+   */
+  const clave = await claveHmac(env);
+
   let firmaValida = false;
   try {
     firmaValida = await crypto.subtle.verify(
       'HMAC',
-      await claveHmac(env),
+      clave,
       deB64url(firmaB64),
       new TextEncoder().encode(payloadB64),
     );
   } catch {
-    // Base64 corrupto en la firma. Es indistinguible de una firma mala, y
-    // tiene que serlo: decir "tu base64 esta mal" es informacion gratis.
+    // Ahora solo puede caer acá el base64 malformado de la firma. Se trata como
+    // firma invalida a proposito: decir "tu base64 esta mal" es informacion
+    // gratis para quien esta probando tokens.
     firmaValida = false;
   }
   if (!firmaValida) return { ok: false, motivo: ERRORES.firma };

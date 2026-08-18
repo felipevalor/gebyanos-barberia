@@ -92,7 +92,7 @@ export async function login(
   // defensa contra enumeracion es la respuesta identica, no el timing. Un
   // atacante que mida tiempos puede inferir si el usuario existe; para eso
   // esta el rate limit de la 2.6.
-  const valida = await verificarPassword(password, barbero?.passwordHash);
+  const valida = await verificarPassword(password, barbero?.passwordHash, barbero?.id);
   if (!barbero || !valida) return { ok: false };
 
   const token = generarToken();

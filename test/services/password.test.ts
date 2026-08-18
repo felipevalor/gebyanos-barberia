@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   hashPassword,
   verificarPassword,
@@ -6,6 +6,7 @@ import {
   validarLargoPassword,
   ITERACIONES,
   LARGO_MIN_PASSWORD,
+  MARCA_HASH_INVALIDO,
 } from '../../src/services/password';
 
 const PASS = 'una password razonable 123';
@@ -183,5 +184,106 @@ describe('costo de CPU', () => {
     const ms = performance.now() - t0;
 
     expect(ms).toBeLessThan(6);
+  });
+});
+
+describe('🔴 un hash corrupto deja rastro, pero NO cambia la respuesta', () => {
+  /**
+   * La única excepción a la regla de oro de los catch, y es deliberada: un
+   * hash corrupto es un error del servidor y aun así se responde lo mismo que
+   * ante una password mal tipeada. Responder distinto sería un canal de
+   * enumeración.
+   *
+   * Lo que compensa la excepción es el log.
+   */
+  const corruptos: [string, string][] = [
+    ['sin las 4 partes', 'pbkdf2$50000$soloTres'],
+    ['esquema desconocido', 'bcrypt$50000$c2FsdA==$aGFzaA=='],
+    ['iteraciones no numéricas', 'pbkdf2$muchas$c2FsdA==$aGFzaA=='],
+    ['iteraciones en cero', 'pbkdf2$0$c2FsdA==$aGFzaA=='],
+    ['base64 roto en el salt', 'pbkdf2$50000$!!!no-es-base64!!!$aGFzaA=='],
+  ];
+
+  for (const [caso, hash] of corruptos) {
+    it(`${caso}: devuelve false y deja una línea marcada`, async () => {
+      const lineas: unknown[][] = [];
+      vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lineas.push(a));
+
+      expect(await verificarPassword('la-que-sea', hash, 'barbero-123')).toBe(false);
+
+      expect(lineas).toHaveLength(1);
+      expect(lineas[0]?.[0]).toBe(MARCA_HASH_INVALIDO);
+      expect(lineas[0]?.[1]).toMatchObject({ barberoId: 'barbero-123' });
+    });
+  }
+
+  it('🔴 el log NUNCA lleva el hash ni la password', async () => {
+    const lineas: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation(
+      (...a: unknown[]) => void lineas.push(a.map((x) => JSON.stringify(x)).join(' ')),
+    );
+
+    await verificarPassword('la-password-secreta', 'pbkdf2$50000$!!!roto!!!$aGFzaA==', 'b-1');
+
+    const todo = lineas.join('\n');
+    expect(todo).not.toContain('la-password-secreta');
+    expect(todo).not.toContain('!!!roto!!!');
+    expect(todo).not.toContain('aGFzaA==');
+  });
+
+  it('🔴 un login normal fallido NO deja esa línea: si no, el marcador no sirve', async () => {
+    // Es la mitad que hace útil al log. Si un hash corrupto y una password mal
+    // tipeada produjeran líneas parecidas, el primero seguiría siendo invisible.
+    const lineas: unknown[][] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lineas.push(a));
+
+    const hashBueno = await hashPassword('la-password-correcta');
+
+    expect(await verificarPassword('la-password-equivocada', hashBueno, 'b-1')).toBe(false);
+    expect(lineas).toHaveLength(0);
+  });
+
+  it('un slug inexistente tampoco: no hay hash, no hay corrupción', async () => {
+    const lineas: unknown[][] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lineas.push(a));
+
+    expect(await verificarPassword('x', null)).toBe(false);
+    expect(await verificarPassword('x', undefined)).toBe(false);
+    expect(lineas).toHaveLength(0);
+  });
+});
+
+describe('🔴 el procedimiento de emergencia: scripts/hash-password.mjs', () => {
+  /**
+   * Es la única puerta cuando un barbero queda afuera del panel: el endpoint
+   * que cambia la password exige estar logueado, así que un hash corrupto no
+   * se arregla desde la aplicación.
+   *
+   * Si el script y `password.ts` se desincronizan, el hash generado no falla
+   * al escribirlo — falla después, en el login, y ahí ya nadie relaciona las
+   * dos cosas. Por eso hay dos tests: uno que verifica un hash real generado
+   * por el script, y otro que fija que las constantes no se separen.
+   */
+
+  /** Generado con: node scripts/hash-password.mjs 'password-de-emergencia-2026' */
+  const HASH_DEL_SCRIPT = 'pbkdf2$50000$Apguv53ibPu0qv9w0P+MAw==$rAR7soDsYmS0VUSAyf5TU6AKtGflfEFz0YX3UgMwrGk=';
+  const PASSWORD = 'password-de-emergencia-2026';
+
+  it('un hash generado por el script valida contra verificarPassword', async () => {
+    expect(await verificarPassword(PASSWORD, HASH_DEL_SCRIPT)).toBe(true);
+  });
+
+  it('y no valida con otra password', async () => {
+    expect(await verificarPassword('otra-password-larga', HASH_DEL_SCRIPT)).toBe(false);
+  });
+
+  it('🔴 las constantes del script no se separaron de password.ts', async () => {
+    const fuente = (await import('../../scripts/hash-password.mjs?raw')).default;
+
+    expect(fuente).toContain(`const ESQUEMA = 'pbkdf2'`);
+    expect(fuente).toContain(`const ITERACIONES = ${ITERACIONES.toLocaleString('en-US').replace(/,/g, '_')}`);
+    expect(fuente).toContain('LARGO_HASH = 32');
+    expect(fuente).toContain(`hash: 'SHA-256'`);
+    expect(fuente).toContain(`LARGO_MIN_PASSWORD = ${LARGO_MIN_PASSWORD}`);
   });
 });

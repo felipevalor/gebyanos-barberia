@@ -105,25 +105,68 @@ function igualesEnTiempoConstante(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
+ * Marcador grepeable en `wrangler tail`.
+ *
+ * Existe para que un hash corrupto NO se confunda con una password mal
+ * tipeada: los dos devuelven lo mismo al cliente, asi que la unica forma de
+ * distinguirlos es que uno deje una linea propia en el log.
+ */
+export const MARCA_HASH_INVALIDO = 'HASH_INVALIDO';
+
+/** Deja constancia sin filtrar NUNCA el hash ni la password. */
+function avisarHashInvalido(barberoId: string | undefined, motivo: string): false {
+  console.error(MARCA_HASH_INVALIDO, {
+    barberoId: barberoId ?? '(desconocido)',
+    motivo,
+    accion: 'Ver el procedimiento de emergencia en el README: hay que reescribir el hash por wrangler d1 execute.',
+  });
+  return false;
+}
+
+/**
  * Verifica una password contra un hash almacenado.
  *
- * Devuelve false ante cualquier hash mal formado en vez de tirar: un registro
- * corrupto en la base tiene que fallar el login, no tumbar el endpoint.
+ * ⚠️ LA UNICA EXCEPCION A LA REGLA DE ORO DE LOS CATCH, Y ES DELIBERADA.
+ *
+ * Un hash corrupto es un error del SERVIDOR y aun asi se responde
+ * `Usuario o contraseña incorrectos`, igual que una password mal tipeada.
+ * Responder distinto seria un canal de enumeracion: probando usuarios se
+ * podria distinguir "existe pero esta roto" de "no existe".
+ *
+ * Lo que compensa la excepcion es el LOG: cada camino de hash malformado deja
+ * una linea marcada con `HASH_INVALIDO` y el id del barbero. Sin eso, el modo
+ * de fallo es invisible — el dueño queda afuera del panel con un mensaje que
+ * lo culpa a él.
+ *
+ * ⚠️ Y OJO: diagnosticable no es arreglable. Un hash corrupto deja al barbero
+ * afuera PARA SIEMPRE, porque el endpoint que cambia la password exige estar
+ * logueado. Si le pasa al unico owner, el panel queda inaccesible y la unica
+ * puerta es reescribir el hash contra la base. El procedimiento esta en el
+ * README, sección "Emergencia: el owner no puede entrar".
  */
 export async function verificarPassword(
   password: string,
   almacenado: string | null | undefined,
+  barberoId?: string,
 ): Promise<boolean> {
+  // Sin hash NO es corrupcion: es un barbero sin acceso al panel, o un slug
+  // que no existe. Es el camino normal y no se loguea.
   if (!almacenado) return false;
 
   const partes = almacenado.split('$');
-  if (partes.length !== 4) return false;
+  if (partes.length !== 4) {
+    return avisarHashInvalido(barberoId, `el hash no tiene 4 partes, tiene ${partes.length}`);
+  }
 
   const [esquema, iterStr, saltB64, hashB64] = partes as [string, string, string, string];
-  if (esquema !== ESQUEMA) return false;
+  if (esquema !== ESQUEMA) {
+    return avisarHashInvalido(barberoId, `esquema desconocido: se esperaba ${ESQUEMA}`);
+  }
 
   const iteraciones = Number(iterStr);
-  if (!Number.isInteger(iteraciones) || iteraciones <= 0) return false;
+  if (!Number.isInteger(iteraciones) || iteraciones <= 0) {
+    return avisarHashInvalido(barberoId, 'las iteraciones no son un entero positivo');
+  }
 
   try {
     const salt = deB64(saltB64);
@@ -131,8 +174,10 @@ export async function verificarPassword(
     const calculado = await derivar(password, salt, iteraciones);
 
     return igualesEnTiempoConstante(calculado, esperado);
-  } catch {
-    return false;
+  } catch (e) {
+    // Base64 corrupto en el salt o el hash, o una falla de `crypto.subtle`.
+    // Ninguna de las dos puede ser culpa de quien intenta loguearse.
+    return avisarHashInvalido(barberoId, e instanceof Error ? e.message : String(e));
   }
 }
 

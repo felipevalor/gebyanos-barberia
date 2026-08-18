@@ -3,3 +3,8 @@ declare module '*.ts?raw' {
   const contenido: string;
   export default contenido;
 }
+
+declare module '*.mjs?raw' {
+  const contenido: string;
+  export default contenido;
+}
