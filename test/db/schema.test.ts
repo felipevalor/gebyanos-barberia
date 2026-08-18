@@ -19,13 +19,14 @@ describe('schema', () => {
     await applyD1Migrations(env.DB, env.MIGRATIONS);
   });
 
-  it('crea las 13 tablas', async () => {
+  it('crea las 14 tablas', async () => {
     const { results } = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%'",
     ).all<{ name: string }>();
 
     expect(results.map((r) => r.name).sort()).toEqual([
       'admin_sessions',
+      'avisos_fallidos',
       'barbero_horarios',
       'barberos',
       'catalogo',
@@ -41,12 +42,13 @@ describe('schema', () => {
     ]);
   });
 
-  it('crea los 12 indices declarados', async () => {
+  it('crea los 13 indices declarados', async () => {
     const { results } = await env.DB.prepare(
       "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'",
     ).all<{ name: string }>();
 
     expect(results.map((r) => r.name).sort()).toEqual([
+      'idx_avisos_fallidos_barbero',
       'idx_barbero_horarios',
       'idx_barberos_slug',
       'idx_clientes_telefono',

@@ -117,6 +117,10 @@ import {
   AVISO_SLOT_CAMBIADO,
 } from '../services/negocio';
 import { calcularStats } from '../services/stats';
+import {
+  listarAvisosFallidos,
+  descartarAvisoFallido,
+} from '../services/notificaciones';
 import { chequearDesactivarBarbero, chequearBorrarBarbero } from '../services/conflictos';
 import { todayArgentina } from '../domain/dates';
 
@@ -885,6 +889,33 @@ adminRoutes.get('/stats', requiereAuth, async (c) => {
   if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
 
   return c.json(ok(await calcularStats(c.env, objetivo.barberoId)), 200);
+});
+
+// ------------------------------------------------- avisos fallidos (4.2)
+
+/**
+ * Los avisos de WhatsApp que no salieron despues de agotar los reintentos.
+ *
+ * Es una pantalla de DIAGNOSTICO: el `motivo` es el texto crudo de CallMeBot,
+ * porque "not registered" y "apikey invalid" se arreglan de maneras distintas
+ * y un "falló" generico no le sirve a nadie.
+ */
+adminRoutes.get('/avisos-fallidos', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  return c.json(ok(await listarAvisosFallidos(c.env, objetivo.barberoId)), 200);
+});
+
+/** Descartar = borrar. Es un tablero de pendientes, no un historial. */
+adminRoutes.delete('/avisos-fallidos/:id', requiereAuth, async (c) => {
+  const sesion = c.get('sesion');
+  const alcance = sesion.rol === 'owner' ? null : sesion.barberoId;
+
+  const borrado = await descartarAvisoFallido(c.env, c.req.param('id'), alcance);
+  if (!borrado) return c.json(fail('Aviso no encontrado.'), 404);
+
+  return c.json(ok(null), 200);
 });
 
 export { DURACION_SESION_MS };

@@ -15,6 +15,13 @@
       "when": 1786987624848,
       "tag": "0001_clientes_telefono_unico",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787054401942,
+      "tag": "0002_avisos_fallidos",
+      "breakpoints": true
     }
   ]
 }

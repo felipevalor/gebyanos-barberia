@@ -1,4 +1,6 @@
 import { sincronizarAlta } from './calendario-reservas';
+import { encolarAviso, avisoDeReserva } from './notificaciones';
+import { NOTAS } from './whatsapp';
 
 /**
  * Hooks post-commit de una reserva. BEST-EFFORT.
@@ -7,8 +9,9 @@ import { sincronizarAlta } from './calendario-reservas';
  * Calendar o WhatsApp fallan, se loguea y se sigue: nunca se tira una reserva
  * por una integracion caida (regla de oro 3).
  *
- * Google Calendar: implementado en la tarea 4.1.
- * WhatsApp: pendiente de la tarea 4.2.
+ * Google Calendar (4.1) y WhatsApp (4.2), en ese orden. El orden no importa
+ * para la correccion —los dos son independientes— pero Calendar primero deja
+ * el `calendar_event_id` guardado antes de que nada mas pueda fallar.
  */
 
 export interface DatosReservaCreada {
@@ -24,6 +27,10 @@ export interface DatosReservaCreada {
   telefono: string;
   /** Solo los ultimos 4 digitos. Es lo unico que puede ir a un log. */
   telefonoEnmascarado: string;
+  /** 'creada' por defecto; 'recurrente' cuando lo genera el cron (Fase 5). */
+  tipo?: 'creada' | 'recurrente';
+  /** La nota del aviso. Distingue una reserva web de una del panel. */
+  nota?: string;
 }
 
 export interface HooksReserva {
@@ -62,7 +69,25 @@ export const hooksPorDefecto: HooksReserva = {
 
     await aPruebaDeFallos('whatsapp', datos, async () => {
       if (!env.NOTIFICACIONES) return;
-      // Fase 4, tarea 4.2. El texto va a ser "Reserva confirmada vía Web."
+
+      // ENCOLA Y VUELVE. El envio real lo hace el consumer: si CallMeBot esta
+      // caido, el que espera no es el cliente que acaba de reservar.
+      await encolarAviso(
+        env,
+        avisoDeReserva(
+          {
+            id: datos.reservaId,
+            barberoId: datos.barberoId,
+            nombre: datos.nombre,
+            telefono: datos.telefono,
+            servicio: datos.servicio,
+            fecha: datos.fecha,
+            hora: datos.hora,
+          },
+          datos.tipo ?? 'creada',
+          datos.nota ?? NOTAS.web,
+        ),
+      );
     });
   },
 };

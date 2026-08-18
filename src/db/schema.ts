@@ -3,7 +3,7 @@ import { sqliteTable, text, integer, index, uniqueIndex } from 'drizzle-orm/sqli
 import { uuidv7 } from './id';
 
 /**
- * Schema de la barberia sobre D1 (SQLite). 13 tablas.
+ * Schema de la barberia sobre D1 (SQLite). 14 tablas.
  *
  * Convenciones (00-CONTEXTO.md):
  *   - IDs        TEXT con UUID v7 generado en el Worker
@@ -342,3 +342,37 @@ export const catalogo = sqliteTable('catalogo', {
   activo: integer('activo').notNull().default(1),
   orden: integer('orden').notNull().default(0),
 });
+
+// ---------------------------------------------------------- avisos_fallidos
+
+/**
+ * Los avisos de WhatsApp que NO salieron, despues de agotar los reintentos.
+ *
+ * ⚠️ Existe porque un aviso perdido es invisible: la reserva quedo bien, el
+ * barbero no se entera, y nadie tiene forma de saber que paso. Sin esta tabla
+ * la unica evidencia serian los logs del Worker, que duran poco y no los mira
+ * nadie.
+ *
+ * Guarda un RESUMEN propio (`resumen`) y no solo la FK: si la reserva se
+ * borrara, la fila tiene que seguir diciendo de qué turno hablaba.
+ *
+ * `motivo` es el texto real de CallMeBot, ya limpio de HTML. Es lo que hace
+ * accionable el registro: "not registered" y "apikey invalid" se arreglan de
+ * maneras distintas.
+ */
+export const avisosFallidos = sqliteTable(
+  'avisos_fallidos',
+  {
+    id: id(),
+    reservaId: text('reserva_id').references(() => reservas.id, { onDelete: 'set null' }),
+    barberoId: text('barbero_id').references(() => barberos.id, { onDelete: 'set null' }),
+    /** 'creada' | 'cancelada' | 'modificada' | 'recurrente' */
+    tipo: text('tipo').notNull(),
+    motivo: text('motivo').notNull(),
+    intentos: integer('intentos').notNull().default(1),
+    /** "Juan Pérez — Corte — 2027-04-01 10:30". Sobrevive al borrado. */
+    resumen: text('resumen').notNull().default(''),
+    createdAt: text('created_at').notNull().default(ahora()),
+  },
+  (t) => [index('idx_avisos_fallidos_barbero').on(t.barberoId, t.createdAt)],
+);

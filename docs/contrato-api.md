@@ -56,6 +56,7 @@ Todavía no existen: integraciones (Fase 4) y la autogestión del cliente
 - [`/api/admin/promos` y `/api/admin/catalogo`](#apiadminpromos-y-apiadmincatalogo)
 - [`/api/admin/negocio`](#apiadminnegocio)
 - [`GET /api/admin/stats`](#get-apiadminstats)
+- [`GET /api/admin/avisos-fallidos`](#get-apiadminavisos-fallidos)
 
 - [Todos los mensajes de error](#todos-los-mensajes-de-error)
 - [Flujo completo de reserva](#flujo-completo-de-reserva)
@@ -1367,3 +1368,61 @@ contarlos inflaría el número del día.
 **"La semana" es la semana calendario, de lunes a domingo**, no los próximos 7
 días: incluye el lunes y el martes que ya pasaron. El `rango` viene en la
 respuesta para que el panel muestre los límites sin recalcularlos.
+
+---
+
+# Avisos de WhatsApp que no salieron (tarea 4.2)
+
+## `GET /api/admin/avisos-fallidos`
+
+Los avisos que agotaron los reintentos. Scoped por rol; un `owner` ve también
+los huérfanos (los de un barbero que fue borrado). Máximo 100, del más nuevo al
+más viejo.
+
+```json
+{ "ok": true, "data": [
+  { "id": "…", "reservaId": "…", "tipo": "creada",
+    "motivo": "APIKey is invalid",
+    "intentos": 3,
+    "resumen": "Juan Pérez — Corte — 2027-04-01 10:30",
+    "createdAt": "2026-08-18T12:00:00.000Z" }
+] }
+```
+
+**`motivo` es el texto crudo de CallMeBot y hay que mostrarlo tal cual.** Es lo
+que hace accionable el registro: `not registered` se arregla registrando el
+número en el bot, `APIKey is invalid` renovando la key. Un "falló" genérico no
+le sirve a nadie.
+
+`resumen` no depende de ninguna FK, así que la fila sigue diciendo de qué turno
+hablaba aunque la reserva o el barbero ya no existan.
+
+## `DELETE /api/admin/avisos-fallidos/:id`
+
+Descartar = borrar. Es un tablero de pendientes, no un historial.
+
+Un `barbero` solo descarta los suyos (404 si no). Los huérfanos son del `owner`.
+
+---
+
+## Sobre el envío en sí
+
+**El endpoint encola y responde: nunca espera a CallMeBot.** Si el proveedor
+está caído, el que espera no es el cliente que acaba de reservar.
+
+⚠️ **CallMeBot devuelve HTTP 200 aunque el envío falle**, y describe el error en
+el cuerpo. El sistema lo detecta parseando el texto; el frontend no participa de
+esto, pero conviene saberlo al leer los `motivo`.
+
+Los tres títulos salen de un **tipo explícito**, no de buscar palabras dentro
+del texto como hacía el sistema viejo:
+
+| Tipo | Título |
+|---|---|
+| `creada` | `✅ Nueva reserva:` |
+| `recurrente` | `✅ Nueva reserva:` |
+| `cancelada` | `❌ Turno cancelado:` |
+| `modificada` | `✏️ Turno modificado:` |
+
+`recurrente` comparte título con `creada` a propósito: para el barbero es una
+reserva nueva igual, y se distingue por la nota.

@@ -11,6 +11,8 @@ import {
   sincronizarReprogramacion,
   sinRomper,
 } from './calendario-reservas';
+import { avisarCambio } from './notificaciones';
+import { NOTAS } from './whatsapp';
 import type { Rol } from './auth';
 
 /**
@@ -94,6 +96,12 @@ export async function cancelarReserva(
   // Por eso el hook es inyectable: con uno sintetico que lanza, la frontera
   // tiene su propio test y la mutacion rompe.
   await sinRomper('cancelacion', id, () => alCancelar(env, id));
+
+  // El aviso se arma DESPUES: `avisarCambio` relee la reserva, y para el texto
+  // del WhatsApp los datos del turno no cambiaron con la cancelacion.
+  await sinRomper('aviso-cancelacion', id, () =>
+    avisarCambio(env, id, 'cancelada', NOTAS.canceladaPanel),
+  );
 
   return { estado: 'exito' };
 }
@@ -219,6 +227,11 @@ export async function reprogramarReserva(
   switch (r.estado) {
     case 'exito':
       await sinRomper('reprogramacion', id, () => sincronizarReprogramacion(env, id));
+      // Despues del UPDATE: `avisarCambio` relee, asi que el aviso lleva la
+      // fecha y hora NUEVAS. Mandarlo antes avisaria del turno viejo.
+      await sinRomper('aviso-reprogramacion', id, () =>
+        avisarCambio(env, id, 'modificada', NOTAS.reagendadaPanel),
+      );
       return { estado: 'exito' };
     case 'overlap':
       return { estado: 'overlap', error: MENSAJE_OVERLAP };

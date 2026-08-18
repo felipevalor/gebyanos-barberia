@@ -297,3 +297,44 @@ matchear en el código. Detalle completo en
 
 Lo estable para matchear es `UNIQUE constraint failed`. El prefijo y el
 `[code: 7500]` son envoltorios de capa.
+
+
+---
+
+## CallMeBot devuelve HTTP 200 cuando falla
+
+Es el comportamiento menos obvio de toda la Fase 4 y merece quedar escrito
+fuera del código.
+
+`GET https://api.callmebot.com/whatsapp.php?phone=…&text=…&apikey=…` responde
+**200 con el error en el cuerpo**, en inglés y en prosa. Ejemplos reales:
+
+- `You need to ask for an API key first`
+- `APIKey is invalid`
+- `The phone number is not registered in the bot`
+
+Un cliente que mire el status da por enviado un mensaje que nunca salió, y el
+barbero se entera cuando el cliente no aparece.
+
+La detección es una heurística sobre nueve palabras
+(`error`, `apikey`, `not allowed`, `not registered`, `invalid`, `no longer`,
+`you need to`, `wrong`, `fail`), case-insensitive, sobre el cuerpo ya limpio de
+HTML y truncado a 300 caracteres.
+
+**Puede dar falsos positivos** — si el texto enviado se reflejara en la
+respuesta y un cliente se llamara "Wrong", se leería como error. El costo del
+falso positivo es un aviso marcado como fallido que en realidad salió; el del
+falso negativo es un turno del que el barbero nunca se entera. Se prefiere
+equivocarse para el lado ruidoso.
+
+### La API key va en la query string
+
+CallMeBot **no soporta autenticación por header**. Eso hace que la URL completa
+sea un secreto:
+
+- la URL no se loguea nunca, ni en el camino de error;
+- de la excepción se toma sólo `e.message`, no el error entero: un `TypeError`
+  de `fetch` puede traer la URL en su `cause`;
+- de los teléfonos se loguean sólo los últimos 4 dígitos.
+
+Hay un test que falla si cualquiera de esas tres cosas se rompe.

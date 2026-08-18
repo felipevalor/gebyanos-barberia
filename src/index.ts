@@ -3,6 +3,7 @@ import { fail } from './api';
 import { publicRoutes } from './routes/public';
 import { adminRoutes } from './routes/admin';
 import { miTurnoRoutes } from './routes/mi-turno';
+import { procesarBatch } from './services/notificaciones';
 
 /** 21:00 ART — recordatorios de los turnos del dia siguiente. */
 const HORA_UTC_RECORDATORIOS = 0;
@@ -62,13 +63,14 @@ export default {
   },
 
   /**
-   * Consumidor de la cola de notificaciones.
-   * El binding esta comentado en wrangler.jsonc (requiere plan Workers Paid).
-   * Implementacion: Fase 4, tarea 4.2.
+   * Consumidor de la cola de avisos de WhatsApp.
+   *
+   * 📌 Queues esta en el plan Free (10.000 ops/dia). El comentario anterior
+   * decia que requeria Workers Paid: quedo desactualizado desde febrero de
+   * 2026, y el binding nunca estuvo comentado en wrangler.jsonc.
    */
-  async queue(batch: MessageBatch<unknown>, _env: Env, _ctx: ExecutionContext) {
-    console.log('queue: no implementado', batch.messages.length);
-    batch.retryAll();
+  async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext) {
+    await procesarBatch(env, batch);
   },
 } satisfies ExportedHandler<Env>;
 

@@ -21,6 +21,7 @@ import {
 import { normalizeTel, esTelefonoArgentino, enmascararTel } from '../domain/phone';
 import { MENSAJE_OVERLAP } from '../do/BarberoAgenda';
 import { hooksPorDefecto, type HooksReserva } from './hooks-reserva';
+import { NOTAS } from './whatsapp';
 
 /**
  * Creacion de reserva. El flujo mas critico del sistema.
@@ -359,6 +360,9 @@ export async function crearReserva(
       nombre: datos.clienteNombre,
       telefono,
       telefonoEnmascarado: enmascararTel(telefono),
+      // La nota del WhatsApp distingue de donde salio el turno. El barbero lee
+      // eso para saber si tiene que confirmarle algo al cliente o no.
+      nota: esPublico ? NOTAS.web : NOTAS.panel,
     });
   } catch (e) {
     console.error(
