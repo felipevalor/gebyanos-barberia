@@ -1494,3 +1494,109 @@ redactados.
 
 Sin configurar da 400 con `Configurá primero el número y la API key de
 CallMeBot para poder probarlos.` y no dispara ningún request.
+
+---
+
+# Autogestión del cliente — `/api/mi-turno` (tarea 5.1)
+
+**El teléfono es toda la credencial.** No hay password. Por eso los rate limits
+de esta sección son la defensa principal y el TTL del token es de 15 minutos.
+
+## El flujo
+
+```
+1. POST /api/mi-turno/buscar        { telefono }        → lista de turnos
+2. POST /api/mi-turno/access-link   { reservaId, telefono } → { token }
+3. GET  /api/mi-turno?token=…                           → el turno
+4. PUT  /api/mi-turno?token=…       { fecha, hora }      → reprogramado
+5. POST /api/mi-turno/cancel?token=…                    → cancelado
+```
+
+| Endpoint | Límite / 15 min | Token |
+|---|---|---|
+| `POST /buscar` | 10 | — |
+| `POST /access-link` | 20 | — |
+| `GET /` | 30 | multi-uso |
+| `PUT /` | 10 | multi-uso |
+| `POST /cancel` | 10 | **single-use** |
+
+Ver y reprogramar son **multi-uso** para que el cliente pueda refrescar la
+pantalla sin quemar el link. Cancelar es **single-use** porque es irreversible.
+
+## 🔴 `buscar` no devuelve el `cancel_token`
+
+El sistema viejo lo hace y eso convierte la búsqueda en una puerta trasera: con
+un teléfono alcanzaría para cancelar sin pasar nunca por el magic link. La
+respuesta trae solo lo necesario para identificar el turno y pedir el link.
+
+## 🔴 `access-link` devuelve el mismo 401 para todo
+
+`No autorizado.` tanto si el teléfono no coincide como si la reserva no existe.
+Distinguirlos convertiría el endpoint en un oráculo de qué reservas existen.
+
+## Los errores del token
+
+Todos dan **401** con el motivo exacto del paso que falló:
+
+| Mensaje | Cuándo |
+|---|---|
+| `Token vacío` | no vino |
+| `Formato de token inválido` | no son exactamente dos partes |
+| `Firma inválida` | firma o payload alterados |
+| `Payload inválido` | JSON roto o incompleto |
+| `Token expirado` | por el `exp` firmado **o** por la fila |
+| `Token no encontrado` | firma válida, sin fila |
+| `Token revocado` | el turno se canceló |
+| `Token ya utilizado` | link de cancelación reusado |
+
+**Después de cancelar, todos los links anteriores quedan revocados** — menos el
+que se usó, que sigue diciendo `Token ya utilizado`. Cada token dice la verdad
+sobre sí mismo.
+
+---
+
+# `/api/admin/recurrentes` (tarea 5.2)
+
+| Método | Ruta |
+|---|---|
+| GET / POST | `/api/admin/recurrentes` |
+| PUT / DELETE | `/api/admin/recurrentes/:id` |
+| PATCH | `/api/admin/recurrentes/:id/activo` |
+| POST | `/api/admin/recurrentes/:id/generar` |
+
+El listado trae `proximoTurno` y `ultimoTurnoReal` **derivados de `reservas`**,
+no del campo `ultimoTurnoFecha`. Ese campo dice cuándo generó el sistema, no lo
+que hay en la agenda: si el turno se canceló o se movió, el campo miente.
+
+## ⏭️ El warning NO bloqueante
+
+Borrar o desactivar un recurrente con turnos futuros ya generados devuelve
+**200 con `warning`**, no 409:
+
+```json
+{
+  "ok": true,
+  "data": { "turnosFuturosCount": 2, "turnosFuturos": [...] },
+  "warning": "El recurrente fue eliminado pero quedan 2 turno(s) futuro(s) agendado(s) que no se cancelaron automáticamente."
+}
+```
+
+**Es el único de los cinco casos de Bloquear+Avisar que no bloquea**, y la
+razón importa: esos turnos son compromisos con clientes reales. Borrar la regla
+de recurrencia no debería cancelarlos. Bloquear obligaría al dueño a cancelar
+turnos de gente que no pidió nada solo para dar de baja una regla.
+
+**El panel tiene que mostrar el warning y la lista.** La operación ya se hizo;
+lo que queda es una decisión humana sobre esos turnos.
+
+## `POST /:id/generar`
+
+Body opcional `{ fecha }`. **Con fecha explícita no corre el loop de 5 ciclos**:
+el operador ya eligió el día y el sistema no se lo mueve.
+
+| Error | Código |
+|---|---|
+| `Recurrente no válido o inactivo.` | 400 |
+| `Cliente no tiene hora preferida.` | 400 |
+| `Slot Ocupado. Intente mover manualmente.` | 409 |
+| `No se generó: {motivo} Mové la fecha/hora manualmente.` | 400 |

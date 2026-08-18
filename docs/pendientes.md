@@ -432,3 +432,34 @@ Un canal que permita iniciar conversación con un número que no optó in:
 
 Si algún día se agrega, el enganche es limpio: hay un cron horario con despacho
 por hora y la infraestructura de cola ya existe.
+
+---
+
+## Fase 5 — dos nombres de la spec que no coinciden con el código
+
+Ninguno es un bug; quedan anotados para que nadie los "corrija" en la
+dirección equivocada.
+
+**1. El secret se llama `MAGIC_LINK_SECRET`, no `MAGIC_LINK_SIGNING_KEY`.**
+La spec de la 5.1 usa el segundo nombre; `.dev.vars.example` y
+`worker-configuration.d.ts` tienen el primero desde la Fase 1. Se respetó lo
+que ya estaba declarado — renombrarlo obligaría a rotar el secret en producción
+sin ganar nada.
+
+**2. La columna es `turno_auto_iso`, no `turno_auto_fecha`.** La spec de la 5.2
+menciona `turno_auto_fecha`; el schema tiene `turno_auto_iso` desde la Fase 1 y
+guarda un ISO-8601 completo, no una fecha suelta.
+
+---
+
+## Fase 5 — el `exp` del payload y el `expires_at` de la fila pueden divergir
+
+Los pasos 5 y 8 de la validación del magic link chequean lo mismo contra dos
+fuentes distintas, a propósito (defensa en profundidad). Hoy siempre coinciden
+porque `emitirToken` los calcula juntos.
+
+**Si alguna vez se agrega un endpoint que extienda la vida de un token**,
+tocando `expires_at` sin reemitir el token, los dos valores divergen y **gana
+el más corto**: el `exp` firmado seguiría venciendo a los 15 minutos aunque la
+fila diga otra cosa. Extender la vida requiere emitir un token nuevo, no
+actualizar la fila.

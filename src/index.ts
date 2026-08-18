@@ -6,6 +6,7 @@ import { miTurnoRoutes } from './routes/mi-turno';
 import { procesarBatch } from './services/notificaciones';
 import { apikeyDe } from './services/callmebot';
 import { limpiarVencidos, refrescarFeriadosForzado } from './services/cron';
+import { generarRecurrentesDelDia } from './services/recurrentes';
 
 /** 03:00 ART — refresco de la cache de feriados nacionales. */
 const HORA_UTC_FERIADOS = 6;
@@ -78,7 +79,14 @@ export default {
     }
 
     if (horaUtc === HORA_UTC_RECURRENTES) {
-      console.log('cron: recurrentes (no implementado)');
+      try {
+        console.log('cron: recurrentes', await generarRecurrentesDelDia(env, ahora));
+      } catch (e) {
+        console.error(
+          'cron: falló la generación de recurrentes',
+          e instanceof Error ? e.message : String(e),
+        );
+      }
     }
   },
 

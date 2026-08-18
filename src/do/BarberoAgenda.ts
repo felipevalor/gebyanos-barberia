@@ -57,6 +57,15 @@ export interface ReservaInput {
   tipo?: 'turno' | 'bloqueo';
 
   /**
+   * Marca de auditoria de los turnos generados por el motor de recurrentes.
+   *
+   * ⚠️ Ademas de auditoria, es lo que hace IDEMPOTENTE al cron de la 5.3: el
+   * job pregunta si ya existe un turno activo con este mismo valor antes de
+   * generar. Sin eso, un cron diario crea un turno duplicado por dia.
+   */
+  turnoAutoIso?: string | null;
+
+  /**
    * Si viene, se hace upsert del cliente por telefono ADENTRO de la seccion
    * critica: buscar por telefono, actualizar el nombre si existe, crearlo si
    * no. Fuera de la serializacion, dos reservas simultaneas del mismo
@@ -313,8 +322,8 @@ export class BarberoAgenda extends DurableObject<Env> {
         `INSERT INTO reservas
            (id, barbero_id, cliente_id, servicio_id,
             nombre, telefono, servicio, duracion_min,
-            fecha, hora, estado, tipo, mensaje, source, cancel_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activa', ?, ?, ?, ?)`,
+            fecha, hora, estado, tipo, mensaje, source, cancel_token, turno_auto_iso)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'activa', ?, ?, ?, ?, ?)`,
       )
         .bind(
           reservaId,
@@ -331,6 +340,7 @@ export class BarberoAgenda extends DurableObject<Env> {
           input.mensaje ?? null,
           input.source ?? 'web',
           cancelToken,
+          input.turnoAutoIso ?? null,
         )
         .run();
     } catch (e) {

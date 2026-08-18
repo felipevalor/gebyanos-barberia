@@ -122,6 +122,23 @@ import {
   descartarAvisoFallido,
 } from '../services/notificaciones';
 import {
+  listarRecurrentes,
+  buscarRecurrente,
+  crearRecurrente,
+  actualizarRecurrente,
+  borrarRecurrente,
+  cambiarActivo,
+  generarTurno,
+  avisoDeTurnosFuturos,
+  puedeTocar as puedeTocarRecurrente,
+  type EntradaRecurrente,
+  ERROR_NO_ENCONTRADO as ERROR_RECURRENTE_NO_ENCONTRADO,
+  ERROR_NO_VALIDO as ERROR_RECURRENTE_NO_VALIDO,
+  ERROR_SIN_HORA as ERROR_RECURRENTE_SIN_HORA,
+  ERROR_SLOT_OCUPADO as ERROR_RECURRENTE_OCUPADO,
+  ERROR_FECHA_INVALIDA as ERROR_RECURRENTE_FECHA,
+} from '../services/recurrentes';
+import {
   leerConfig,
   guardarConfig,
   probarEnvio,
@@ -987,6 +1004,135 @@ adminRoutes.post('/callmebot/test', requiereAuth, async (c) => {
       // 200 con `enviado: false`: la operacion de diagnostico funciono, lo que
       // fallo es el envio. Un 500 haria pensar que se rompio el panel.
       return c.json(ok({ enviado: false, motivo: r.motivo }), 200);
+  }
+});
+
+// ---------------------------------------------------- recurrentes (5.2)
+
+/** Resuelve el recurrente y el permiso en un paso. */
+async function recurrenteDe(c: {
+  env: Env;
+  req: { param: (k: string) => string };
+  get: (k: 'sesion') => { barberoId: string; rol: 'barbero' | 'owner' };
+}) {
+  const r = await buscarRecurrente(c.env, c.req.param('id'));
+  if (!r) return { estado: 'noEncontrado' as const };
+  if (!puedeTocarRecurrente(c.get('sesion'), r)) return { estado: 'prohibido' as const };
+  return { estado: 'ok' as const, r };
+}
+
+adminRoutes.get('/recurrentes', requiereAuth, async (c) => {
+  const objetivo = resolverBarbero(c.get('sesion'), c.req.query('barberoId'));
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+
+  return c.json(ok(await listarRecurrentes(c.env, objetivo.barberoId)), 200);
+});
+
+adminRoutes.post('/recurrentes', requiereAuth, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const objetivo = resolverBarbero(c.get('sesion'), (cuerpo as { barberoId?: string }).barberoId);
+  if (!objetivo.ok) return c.json(fail(ERROR_AGENDA_AJENA), 403);
+  const barberoId = objetivo.barberoId ?? c.get('sesion').barberoId;
+
+  const r = await crearRecurrente(c.env, barberoId, cuerpo as EntradaRecurrente);
+  if (r.estado === 'error') return c.json(fail(r.error), 400);
+
+  return c.json(ok(await buscarRecurrente(c.env, r.id)), 200);
+});
+
+adminRoutes.put('/recurrentes/:id', requiereAuth, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  if (!cuerpo || typeof cuerpo !== 'object') {
+    return c.json(fail('Formato de solicitud inválido.'), 400);
+  }
+
+  const encontrado = await recurrenteDe(c);
+  if (encontrado.estado === 'noEncontrado') return c.json(fail(ERROR_RECURRENTE_NO_ENCONTRADO), 404);
+  if (encontrado.estado === 'prohibido') return c.json(fail(ERROR_PROHIBIDO), 403);
+
+  const error = await actualizarRecurrente(c.env, encontrado.r.id, cuerpo as EntradaRecurrente);
+  if (error) return c.json(fail(error), 400);
+
+  return c.json(ok(await buscarRecurrente(c.env, encontrado.r.id)), 200);
+});
+
+/**
+ * ⏭️ EL WARNING NO BLOQUEANTE QUE QUEDO PENDIENTE DE LA 3.2.
+ *
+ * Si quedan turnos futuros ya generados, la operacion SE HACE IGUAL y devuelve
+ * 200 con `warning`, no 409. A diferencia de los otros cuatro casos de
+ * Bloquear+Avisar, esos turnos son compromisos con clientes reales: borrar la
+ * regla de recurrencia no deberia cancelarlos. El dueño decide qué hacer.
+ *
+ * Bloquear lo obligaria a cancelar turnos de gente que no pidio nada solo para
+ * poder dar de baja una regla.
+ */
+adminRoutes.delete('/recurrentes/:id', requiereAuth, async (c) => {
+  const encontrado = await recurrenteDe(c);
+  if (encontrado.estado === 'noEncontrado') return c.json(fail(ERROR_RECURRENTE_NO_ENCONTRADO), 404);
+  if (encontrado.estado === 'prohibido') return c.json(fail(ERROR_PROHIBIDO), 403);
+
+  // El aviso se calcula ANTES de borrar: despues, la fila ya no esta para
+  // saber de qué cliente y barbero eran los turnos.
+  const aviso = await avisoDeTurnosFuturos(c.env, encontrado.r);
+  await borrarRecurrente(c.env, encontrado.r.id);
+
+  return aviso
+    ? c.json(ok(aviso.datos, aviso.warning), 200)
+    : c.json(ok(null), 200);
+});
+
+adminRoutes.patch('/recurrentes/:id/activo', requiereAuth, async (c) => {
+  const cuerpo = await cuerpoJson(c);
+  const activo = (cuerpo as { activo?: unknown } | null)?.activo;
+
+  if (typeof activo !== 'boolean') {
+    return c.json(fail('activo es obligatorio y tiene que ser true o false.'), 400);
+  }
+
+  const encontrado = await recurrenteDe(c);
+  if (encontrado.estado === 'noEncontrado') return c.json(fail(ERROR_RECURRENTE_NO_ENCONTRADO), 404);
+  if (encontrado.estado === 'prohibido') return c.json(fail(ERROR_PROHIBIDO), 403);
+
+  // Solo al DESACTIVAR: reactivar no deja ningun turno huerfano.
+  const aviso = activo ? null : await avisoDeTurnosFuturos(c.env, encontrado.r);
+  await cambiarActivo(c.env, encontrado.r.id, activo);
+
+  const datos = await buscarRecurrente(c.env, encontrado.r.id);
+  return aviso ? c.json(ok(datos, aviso.warning), 200) : c.json(ok(datos), 200);
+});
+
+adminRoutes.post('/recurrentes/:id/generar', requiereAuth, async (c) => {
+  const cuerpo = await cuerpoJson(c).catch(() => null);
+  const fecha = (cuerpo as { fecha?: unknown } | null)?.fecha;
+
+  if (fecha !== undefined && (typeof fecha !== 'string' || !esFechaValida(fecha))) {
+    return c.json(fail(ERROR_RECURRENTE_FECHA), 400);
+  }
+
+  const encontrado = await recurrenteDe(c);
+  if (encontrado.estado === 'noEncontrado') return c.json(fail(ERROR_RECURRENTE_NO_ENCONTRADO), 404);
+  if (encontrado.estado === 'prohibido') return c.json(fail(ERROR_PROHIBIDO), 403);
+
+  const r = await generarTurno(c.env, encontrado.r.id, {
+    ...(typeof fecha === 'string' ? { fechaExplicita: fecha } : {}),
+  });
+
+  switch (r.estado) {
+    case 'exito':
+      return c.json(ok({ fecha: r.fecha, hora: r.hora, reservaId: r.reservaId }), 200);
+    case 'noValido':
+      return c.json(fail(ERROR_RECURRENTE_NO_VALIDO), 400);
+    case 'sinHora':
+      return c.json(fail(ERROR_RECURRENTE_SIN_HORA), 400);
+    case 'ocupado':
+      return c.json(fail(ERROR_RECURRENTE_OCUPADO), 409);
+    default:
+      return c.json(fail(r.error), 400);
   }
 });
 
