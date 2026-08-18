@@ -1,3 +1,5 @@
+import { enmascararTel } from '../domain/phone';
+
 /**
  * WhatsApp via CallMeBot.
  *
@@ -118,6 +120,85 @@ const SEÑALES_DE_FALLO = [
   'fail',
 ] as const;
 
+/**
+ * ⚠️ CALLMEBOT REFLEJA EL REQUEST. Verificado contra el servicio real
+ * (2026-08-18), con una apikey invalida y un marcador en el texto:
+ *
+ *   HTTP 203
+ *   <p>Message to: +10000000000
+ *   <p>Text to send: ZZMARCADORZZ Nombre: Juan
+ *   <p style="color:red"><b>APIKey is invalid.</b> Please create a new one...
+ *
+ * Tres conclusiones, todas con consecuencias:
+ *
+ *   1. EL TEXTO ENVIADO VUELVE. El falso positivo de la heuristica no era
+ *      hipotetico: un cliente llamado "Error" —palabra que existe en español—
+ *      haria que su propio nombre marque el envio como fallido. Por eso las
+ *      nueve palabras se buscan sobre la respuesta MENOS el eco.
+ *
+ *   2. EL TELEFONO VUELVE. El cuerpo termina persistido como `motivo` y
+ *      expuesto por `GET /api/admin/avisos-fallidos`, asi que se redacta.
+ *
+ *   3. LA APIKEY *NO* VUELVE, pero se redacta igual: cuesta cero y el dia que
+ *      CallMeBot cambie el formato, la alternativa es una credencial dentro de
+ *      una respuesta HTTP.
+ *
+ * Nota al margen: el status del error fue 203, no 200. La spec decia 200. Los
+ * dos son 2xx, asi que el codigo no cambia — pero confirma que mirar el status
+ * no sirve para nada acá.
+ */
+
+const aprieta = (t: string) => t.replace(/\s+/g, ' ').trim();
+
+/**
+ * La respuesta MENOS el texto que mandamos.
+ *
+ * Solo para DETECTAR. El `motivo` que ve el barbero conserva el cuerpo entero
+ * —redactado— porque el eco ayuda a entender de que mensaje se habla.
+ */
+export function quitarEco(detalle: string, textoEnviado?: string): string {
+  if (!textoEnviado) return detalle;
+
+  let resto = detalle;
+  const trozos = [aprieta(textoEnviado), encodeURIComponent(textoEnviado)];
+
+  // Y linea por linea: el eco puede venir troceado o parcialmente escapado.
+  for (const linea of textoEnviado.split('\n')) {
+    const l = aprieta(linea);
+    if (l.length >= 4) trozos.push(l);
+  }
+
+  for (const t of trozos) if (t) resto = resto.split(t).join(' ');
+  return resto;
+}
+
+/**
+ * Tapa lo que no puede salir del sistema: la apikey y los telefonos.
+ *
+ * Se aplica ANTES de persistir y de loguear, no en la salida: si el secreto
+ * llega a la base, cualquier lectura futura lo expone.
+ */
+export function redactarSecretos(
+  texto: string,
+  secretos: { apikey?: string; telefono?: string },
+): string {
+  let r = texto;
+
+  if (secretos.apikey && secretos.apikey.length >= 4) {
+    r = r.split(secretos.apikey).join('[apikey]');
+  }
+  // Cualquier `apikey=...` o `apikey: ...` que aparezca con otro valor.
+  r = r.replace(/(apikey\s*[=:]\s*)[^\s&"'<]+/gi, '$1[apikey]');
+
+  if (secretos.telefono) {
+    for (const forma of [secretos.telefono, secretos.telefono.replace(/^\+/, '')]) {
+      if (forma.length >= 7) r = r.split(forma).join(enmascararTel(forma));
+    }
+  }
+
+  return r;
+}
+
 /** Saca tags HTML y aprieta los espacios: CallMeBot contesta con HTML. */
 export function limpiarDetalle(texto: string): string {
   return texto
@@ -136,14 +217,20 @@ export type Resultado =
  *
  * Un 200 con "You need to ask for an API key" es un fallo.
  */
-export function interpretarRespuesta(status: number, cuerpo: string): Resultado {
+export function interpretarRespuesta(
+  status: number,
+  cuerpo: string,
+  textoEnviado?: string,
+): Resultado {
   const detalle = limpiarDetalle(cuerpo);
 
   if (status < 200 || status >= 300) {
     return { ok: false, motivo: `CallMeBot respondió HTTP ${status}: ${detalle}` };
   }
 
-  const enMinusculas = detalle.toLowerCase();
+  // Las nueve palabras se buscan sobre la respuesta SIN el eco del request:
+  // el texto que mandamos nosotros no es evidencia de nada.
+  const enMinusculas = quitarEco(detalle, textoEnviado).toLowerCase();
   const señal = SEÑALES_DE_FALLO.find((s) => enMinusculas.includes(s));
 
   if (señal) return { ok: false, motivo: detalle };
@@ -175,15 +262,25 @@ export async function enviarWhatsApp(destino: Destino, texto: string): Promise<R
   url.searchParams.set('text', texto);
   url.searchParams.set('apikey', destino.apikey);
 
+  const tapar = (motivo: string) =>
+    redactarSecretos(motivo, { apikey: destino.apikey, telefono: destino.telefono });
+
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    return interpretarRespuesta(res.status, await res.text().catch(() => ''));
+    const r = interpretarRespuesta(res.status, await res.text().catch(() => ''), texto);
+
+    // ⚠️ Redactado ACA, en la frontera. El motivo termina en la base y en
+    // `GET /api/admin/avisos-fallidos`: si el secreto entra, cualquier lectura
+    // futura lo expone.
+    return r.ok ? r : { ok: false, motivo: tapar(r.motivo) };
   } catch (e) {
     // ⚠️ El mensaje de la excepcion, NO el error entero: un `TypeError` de
     // fetch puede traer la URL —con la apikey— en su `cause`.
     return {
       ok: false,
-      motivo: `Excepción al contactar CallMeBot: ${e instanceof Error ? e.message : String(e)}`,
+      motivo: tapar(
+        `Excepción al contactar CallMeBot: ${e instanceof Error ? e.message : String(e)}`,
+      ),
     };
   }
 }

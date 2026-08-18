@@ -321,11 +321,42 @@ La detección es una heurística sobre nueve palabras
 `you need to`, `wrong`, `fail`), case-insensitive, sobre el cuerpo ya limpio de
 HTML y truncado a 300 caracteres.
 
-**Puede dar falsos positivos** — si el texto enviado se reflejara en la
-respuesta y un cliente se llamara "Wrong", se leería como error. El costo del
-falso positivo es un aviso marcado como fallido que en realidad salió; el del
-falso negativo es un turno del que el barbero nunca se entera. Se prefiere
-equivocarse para el lado ruidoso.
+### CallMeBot refleja el request — verificado, no supuesto
+
+Probado contra el servicio real el **2026-08-18**, con una apikey inválida y un
+marcador en el texto:
+
+```
+GET .../whatsapp.php?phone=%2B10000000000&text=ZZMARCADORZZ%20Nombre%3A%20Juan&apikey=999999999
+
+HTTP 203
+<p>Message to: +10000000000
+<p>Text to send: ZZMARCADORZZ Nombre: Juan
+<p style="color:red"><b>APIKey is invalid.</b> Please create a new one or contact support if you lost it.
+```
+
+Tres cosas, todas con consecuencias:
+
+**1. El texto enviado vuelve.** El falso positivo de la heurística no era
+hipotético. De los seis campos del mensaje, el único que controla el cliente es
+`nombre` — el servicio sale del catálogo y la nota es uno de siete strings
+fijos — así que el escenario real es alguien llamándose **"Error"**, que además
+de ser una de las nueve palabras es una palabra española corriente.
+
+Resuelto sin tocar el trade-off: las nueve palabras se buscan sobre la
+respuesta **menos el eco del request** (`quitarEco`). El `motivo` que ve el
+barbero conserva el cuerpo entero, porque el eco ayuda a saber de qué mensaje
+se habla.
+
+**2. El teléfono vuelve.** Y el cuerpo termina persistido como `motivo` y
+expuesto por `GET /api/admin/avisos-fallidos`. Se enmascara.
+
+**3. La apikey NO vuelve** — pero se redacta igual. Cuesta cero, y el día que
+CallMeBot cambie el formato la alternativa es una credencial dentro de una
+respuesta HTTP que cualquier barbero autenticado puede leer.
+
+**El status del error fue 203, no 200.** La spec decía 200. Los dos son 2xx así
+que el código no cambia, pero confirma que mirar el status no sirve de nada.
 
 ### La API key va en la query string
 

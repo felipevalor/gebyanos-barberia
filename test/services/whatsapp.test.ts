@@ -554,3 +554,103 @@ describe('el barbero puede ver lo que no salió', () => {
     expect(await listarAvisosFallidos(env, null)).toHaveLength(0);
   });
 });
+
+describe('🔴 CallMeBot refleja el request (verificado contra el servicio real)', () => {
+  /**
+   * Respuesta real del 2026-08-18 con una apikey inválida:
+   *
+   *   HTTP 203
+   *   <p>Message to: +10000000000
+   *   <p>Text to send: ZZMARCADORZZ Nombre: Juan
+   *   <p style="color:red"><b>APIKey is invalid.</b> Please create a new one…
+   */
+  const ecoReal = (texto: string, tel = '+5493416513207') =>
+    `<p>Message to: ${tel}<p>Text to send: ${texto}<p style="color:red"><b>APIKey is invalid.</b> Please create a new one or contact support if you lost it.`;
+
+  it('el eco no cuenta: un cliente llamado "Error" no marca su propio turno como fallido', () => {
+    // El falso positivo no era hipotético. `error` además es palabra española.
+    const texto = armarMensaje({
+      tipo: 'creada',
+      nombre: 'Error Gómez',
+      telefono: '+5493416513207',
+      servicio: 'Corte',
+      fecha: '2027-04-01',
+      hora: '10:30',
+    });
+
+    // Sin el eco de por medio, la respuesta es un éxito limpio.
+    expect(interpretarRespuesta(203, `<p>Text to send: ${texto}<p>Message queued.`, texto).ok).toBe(
+      true,
+    );
+
+    // Y sin pasar el texto enviado, la heurística se lo comía: es la prueba de
+    // que la resta del eco es lo que arregla el falso positivo.
+    expect(interpretarRespuesta(203, `<p>Text to send: ${texto}<p>Message queued.`).ok).toBe(false);
+  });
+
+  it('el error REAL se sigue detectando aunque venga con el eco pegado', () => {
+    const texto = armarMensaje({
+      tipo: 'creada',
+      nombre: 'Error Gómez',
+      telefono: '+5493416513207',
+      servicio: 'Corte',
+      fecha: '2027-04-01',
+      hora: '10:30',
+    });
+
+    const r = interpretarRespuesta(203, ecoReal(texto), texto);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.motivo).toContain('APIKey is invalid');
+  });
+
+  it('el status 203 del error real cae en el camino de 2xx', () => {
+    // La spec decía 200; el servicio devuelve 203. Los dos son 2xx, así que
+    // mirar el status no sirve de nada — que es justamente el punto.
+    expect(interpretarRespuesta(203, 'APIKey is invalid').ok).toBe(false);
+    expect(interpretarRespuesta(200, 'APIKey is invalid').ok).toBe(false);
+  });
+});
+
+describe('🔴 el motivo no puede llevar secretos: lo expone un endpoint', () => {
+  it('la apikey se redacta aunque hoy CallMeBot no la refleje', async () => {
+    // Verificado: hoy no la refleja. Se redacta igual — cuesta cero, y el día
+    // que cambien el formato la alternativa es una credencial en una respuesta
+    // HTTP que cualquier barbero autenticado puede leer.
+    interceptar([new Response('ERROR: apikey=k-super-secreta-123 is invalid')]);
+
+    const r = await enviarWhatsApp(
+      { telefono: '+5493416513207', apikey: 'k-super-secreta-123' },
+      'hola',
+    );
+
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.motivo).not.toContain('k-super-secreta-123');
+    expect(r.ok === false && r.motivo).toContain('[apikey]');
+  });
+
+  it('🔴 el teléfono reflejado se enmascara', async () => {
+    // CallMeBot SÍ lo refleja: "Message to: +5493416513207".
+    interceptar([
+      new Response('<p>Message to: +5493416513207<p><b>APIKey is invalid.</b>'),
+    ]);
+
+    const r = await enviarWhatsApp({ telefono: '+5493416513207', apikey: 'k' }, 'hola');
+
+    expect(r.ok === false && r.motivo).not.toContain('5493416513207');
+    expect(r.ok === false && r.motivo).toContain('APIKey is invalid');
+  });
+
+  it('lo redactado es lo que se PERSISTE, no solo lo que se muestra', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    interceptar([new Response('ERROR: apikey=key-del-barbero rechazada')]);
+
+    await procesarAviso(env, mensaje(), MAX_INTENTOS);
+
+    const fila = await env.DB.prepare('SELECT motivo FROM avisos_fallidos').first<{
+      motivo: string;
+    }>();
+
+    expect(fila?.motivo).not.toContain('key-del-barbero');
+    expect(fila?.motivo).toContain('[apikey]');
+  });
+});
