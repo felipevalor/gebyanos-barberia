@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types",
+    "deploy": "wrangler deploy --define __VERSION__:\"'\"$(git rev-parse --short HEAD)\"'\" --define __DEPLOYED_AT__:\"'\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"'\"",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply barberia --local",
     "db:migrate:remote": "wrangler d1 migrations apply barberia --remote",

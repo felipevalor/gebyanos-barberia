@@ -113,15 +113,29 @@ function igualesEnTiempoConstante(a: Uint8Array, b: Uint8Array): boolean {
  */
 export const MARCA_HASH_INVALIDO = 'HASH_INVALIDO';
 
+/**
+ * Marcador propio para el barbero que EXISTE y no tiene password usable.
+ *
+ * ⚠️ Va aparte de `HASH_INVALIDO` porque el sintoma es el mismo pero el
+ * arreglo no: un hash corrupto se reescribe, y esto se resuelve poniendole una
+ * password. Y va aparte del silencio del slug inexistente porque son
+ * situaciones opuestas — un usuario que no existe es ruido, y un barbero que
+ * existe y no puede entrar NUNCA es exactamente lo que hay que gritar.
+ */
+export const MARCA_SIN_PASSWORD = 'BARBERO_SIN_PASSWORD';
+
 /** Deja constancia sin filtrar NUNCA el hash ni la password. */
-function avisarHashInvalido(barberoId: string | undefined, motivo: string): false {
-  console.error(MARCA_HASH_INVALIDO, {
+function avisar(marca: string, barberoId: string | undefined, motivo: string): false {
+  console.error(marca, {
     barberoId: barberoId ?? '(desconocido)',
     motivo,
     accion: 'Ver el procedimiento de emergencia en el README: hay que reescribir el hash por wrangler d1 execute.',
   });
   return false;
 }
+
+const avisarHashInvalido = (barberoId: string | undefined, motivo: string) =>
+  avisar(MARCA_HASH_INVALIDO, barberoId, motivo);
 
 /**
  * Verifica una password contra un hash almacenado.
@@ -149,9 +163,31 @@ export async function verificarPassword(
   almacenado: string | null | undefined,
   barberoId?: string,
 ): Promise<boolean> {
-  // Sin hash NO es corrupcion: es un barbero sin acceso al panel, o un slug
-  // que no existe. Es el camino normal y no se loguea.
-  if (!almacenado) return false;
+  /**
+   * ⚠️ SIN HASH SON DOS SITUACIONES DISTINTAS, Y CONFUNDIRLAS DEJA ABIERTO
+   * JUSTO EL AGUJERO QUE EL MARCADOR VINO A TAPAR.
+   *
+   *   - NO HAY FILA para ese slug → `barberoId` llega `undefined`. Es un
+   *     usuario inexistente: ruido, no se loguea. Marcarlo convertiria el log
+   *     en un contador de tipeos y volveria inutil al marcador.
+   *
+   *   - HAY FILA con `password_hash` NULL → `barberoId` llega con valor. Es un
+   *     barbero que EXISTE y no va a poder entrar nunca. El sintoma es
+   *     identico al del hash corrupto y hay que gritarlo igual.
+   *
+   * El llamador ya pasa `barbero?.id`, asi que la diferencia entre los dos
+   * casos esta a mano: es el unico dato que hace falta para distinguirlos.
+   */
+  if (!almacenado) {
+    if (barberoId) {
+      return avisar(
+        MARCA_SIN_PASSWORD,
+        barberoId,
+        'el barbero existe pero no tiene password_hash: no puede entrar al panel',
+      );
+    }
+    return false;
+  }
 
   const partes = almacenado.split('$');
   if (partes.length !== 4) {

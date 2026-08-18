@@ -13,9 +13,36 @@ const HORA_UTC_FERIADOS = 6;
 /** 06:00 ART — generacion de los turnos recurrentes. */
 const HORA_UTC_RECURRENTES = 9;
 
+/**
+ * Inyectados en build time. Ver el script `deploy` en package.json.
+ *
+ * Se declaran con `declare const` y no se leen de `env`: un binding se puede
+ * cambiar sin redesplegar, y entonces mentiria justo sobre lo que tiene que
+ * decir la verdad.
+ */
+declare const __VERSION__: string;
+declare const __DEPLOYED_AT__: string;
+
+const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : 'desconocido';
+const DEPLOYED_AT = typeof __DEPLOYED_AT__ === 'string' ? __DEPLOYED_AT__ : 'desconocido';
+
 const app = new Hono<{ Bindings: Env }>();
 
-app.get('/health', (c) => c.json({ ok: true }, 200));
+/**
+ * `GET /health` — la sonda de DRIFT, no solo de vida.
+ *
+ * ⚠️ Devuelve el SHA del commit desplegado, inyectado en build time por
+ * `wrangler deploy --define`. Un `git log` contra un request y sabés en diez
+ * segundos si lo que corre es lo que creés.
+ *
+ * Esto no existia, y por eso produccion estuvo 15 commits atras sin que nadie
+ * lo viera: el suite de tests no puede saber qué version esta publicada.
+ *
+ * `desconocido` significa que se buildeo sin el `--define`, o sea `npm run dev`.
+ */
+app.get('/health', (c) =>
+  c.json({ ok: true, version: VERSION, deployedAt: DEPLOYED_AT }, 200),
+);
 
 app.route('/api', publicRoutes);
 app.route('/api/admin', adminRoutes);

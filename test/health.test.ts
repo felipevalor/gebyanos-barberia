@@ -3,14 +3,22 @@ import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 
 describe('GET /health', () => {
-  it('responde { ok: true }', async () => {
+  it('responde ok con la version desplegada', async () => {
     const request = new Request('http://localhost/health');
     const ctx = createExecutionContext();
     const response = await worker.fetch(request, env, ctx);
     await waitOnExecutionContext(ctx);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
+    // ⚠️ El SHA es lo que convierte a /health en una sonda de DRIFT y no solo
+    // de vida. En los tests no hay `--define`, asi que vale 'desconocido' —
+    // pero el CAMPO tiene que estar, porque el smoke check lo compara contra
+    // el commit que se desplego.
+    expect(await response.json()).toEqual({
+      ok: true,
+      version: 'desconocido',
+      deployedAt: 'desconocido',
+    });
   });
 });
 

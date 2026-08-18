@@ -7,6 +7,7 @@ import {
   ITERACIONES,
   LARGO_MIN_PASSWORD,
   MARCA_HASH_INVALIDO,
+  MARCA_SIN_PASSWORD,
 } from '../../src/services/password';
 
 const PASS = 'una password razonable 123';
@@ -177,13 +178,26 @@ describe('costo de CPU', () => {
     // El umbral es 6 ms, no 10: si fuera 10 el test recien avisaria cuando ya
     // no hay margen para el resto del request (parseo, query, cookie), y la
     // medicion local es optimista respecto del edge.
+    // ⚠️ EL MINIMO DE VARIAS CORRIDAS, NO UNA SOLA NI EL PROMEDIO.
+    //
+    // Es una medicion de reloj de pared en una maquina compartida: el ruido de
+    // scheduling SOLO puede sumar tiempo, nunca restarlo. Asi que el minimo se
+    // acerca al costo real y el promedio no. Con una sola corrida el test es
+    // flaky —se vio fallar con 40 ms mientras el resto del suite corria— y un
+    // test que falla por la carga de la maquina termina ignorandose.
+    //
+    // El guard sigue en pie: subir las iteraciones a 200.000 empuja tambien al
+    // minimo muy por encima del umbral.
     const hash = await hashPassword(PASS);
 
-    const t0 = performance.now();
-    await verificarPassword(PASS, hash);
-    const ms = performance.now() - t0;
+    const medidas: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      await verificarPassword(PASS, hash);
+      medidas.push(performance.now() - t0);
+    }
 
-    expect(ms).toBeLessThan(6);
+    expect(Math.min(...medidas)).toBeLessThan(6);
   });
 });
 
@@ -243,13 +257,31 @@ describe('🔴 un hash corrupto deja rastro, pero NO cambia la respuesta', () =>
     expect(lineas).toHaveLength(0);
   });
 
-  it('un slug inexistente tampoco: no hay hash, no hay corrupción', async () => {
+  it('🔴 un slug INEXISTENTE no marca: sin barberoId no hay a quién señalar', async () => {
+    // Marcarlo convertiría el log en un contador de tipeos y volvería inútil
+    // al marcador.
     const lineas: unknown[][] = [];
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lineas.push(a));
 
     expect(await verificarPassword('x', null)).toBe(false);
     expect(await verificarPassword('x', undefined)).toBe(false);
     expect(lineas).toHaveLength(0);
+  });
+
+  it('🔴 pero un barbero que EXISTE sin password sí marca, con marcador propio', async () => {
+    // Es el caso del medio, y el que de verdad pasó: se parece al slug
+    // inexistente pero es lo contrario — alguien que existe y no va a poder
+    // entrar nunca. Va aparte de HASH_INVALIDO porque el arreglo es otro: un
+    // hash corrupto se reescribe, esto se resuelve poniéndole una password.
+    const lineas: unknown[][] = [];
+    vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void lineas.push(a));
+
+    expect(await verificarPassword('la-que-sea', null, 'barbero-existente')).toBe(false);
+
+    expect(lineas).toHaveLength(1);
+    expect(lineas[0]?.[0]).toBe(MARCA_SIN_PASSWORD);
+    expect(lineas[0]?.[0]).not.toBe(MARCA_HASH_INVALIDO);
+    expect(lineas[0]?.[1]).toMatchObject({ barberoId: 'barbero-existente' });
   });
 });
 
