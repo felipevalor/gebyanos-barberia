@@ -643,12 +643,22 @@ la URL real.
 **2. La base vacía tampoco es detectable por un test.** Cada test siembra sus
 propios `servicios`. Un fixture no observa el estado de producción.
 
-**3. El hueco real: ningún test recorre el flujo público de punta a punta
-usando SOLO la API.** Todos los tests de reserva se inyectan un `servicioId`
-que acaban de crear. Un test que hiciera
-`GET /api/servicios` → `GET /api/disponibilidad` → `POST /api/reservas`,
-usando únicamente lo que devuelve la API, fallaría con el catálogo vacío — y es
-exactamente el recorrido que hace el frontend.
+**3. Falta un test que recorra el flujo público usando SOLO la API** —
+`GET /api/servicios` → `GET /api/disponibilidad` → `POST /api/reservas`, sin
+inyectarse un `servicioId` que acaba de crear. Es el recorrido exacto del
+frontend y vale tenerlo.
+
+⚠️ **Pero ese test NO habría detectado esto**, y decir que sí sería el mismo
+error de siempre: *ese test también siembra sus propios servicios*, igual que
+todos los demás, así que su catálogo nunca está vacío. Lo que detecta una base
+de producción vacía es el smoke check contra producción, no un test.
+
+**Son dos arreglos para dos problemas distintos y no hay que mezclarlos:**
+
+| Arreglo | Qué problema resuelve |
+|---|---|
+| Test del flujo público solo-API | Que el contrato del recorrido del frontend se rompa en el código |
+| Smoke check post-deploy | Que producción esté vacía, desactualizada o sin secrets |
 
 **Y una cuarta que no es de los tests sino mía:** reporté la Fase 5 como
 terminada sin verificar que estuviera desplegada. Confundí "el suite está en
