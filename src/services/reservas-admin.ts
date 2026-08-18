@@ -46,6 +46,16 @@ export type ResultadoCancelacion =
   | { estado: 'prohibido' };
 
 /**
+ * El hook post-cancelacion, inyectable SOLO para poder probar la red.
+ *
+ * No es un punto de extension: es el seam que vuelve testeable la garantia de
+ * que un hook que lanza no tira la cancelacion. Sin poder inyectar uno roto,
+ * esa frontera no tiene test propio — `sincronizarCancelacion` atrapa todo lo
+ * suyo, asi que nunca llega a ejercitarla.
+ */
+export type HookCancelacion = (env: Env, reservaId: string) => Promise<unknown>;
+
+/**
  * SOFT DELETE. Nunca `DELETE` fisico.
  *
  * Marca `estado = 'cancelada'` y sella `cancelada_at`. La fila queda: es
@@ -57,6 +67,7 @@ export async function cancelarReserva(
   sesion: { barberoId: string; rol: Rol },
   id: string,
   ahora: Date = new Date(),
+  alCancelar: HookCancelacion = sincronizarCancelacion,
 ): Promise<ResultadoCancelacion> {
   const reserva = await buscarReserva(env, id);
   if (!reserva) return { estado: 'noEncontrada' };
@@ -71,13 +82,18 @@ export async function cancelarReserva(
   // que es lo que le importa a la disponibilidad. Un evento que sobreviva en
   // el calendario es molesto; un 500 acá haria creer que no se cancelo.
   //
-  // ⚠️ `sinRomper` es una SEGUNDA capa, y sacarlo hoy no rompe ningun test —
-  // verificado por mutacion. No es un test faltante: `sincronizarCancelacion`
-  // ya atrapa todo lo suyo, asi que el mutante es equivalente. Se deja igual
-  // porque la garantia "nunca tires una reserva por una integracion caida" no
-  // puede depender de que cada pieza futura se acuerde de atrapar lo suyo, y
-  // este llamador ya devolvio exito. `sinRomper` se prueba donde vive.
-  await sinRomper('cancelacion', id, () => sincronizarCancelacion(env, id));
+  // ⚠️ `sinRomper` es una SEGUNDA capa. Con el hook real es redundante —
+  // `sincronizarCancelacion` atrapa todo lo suyo— y por eso una mutacion que
+  // lo borrara sobrevivia: era un mutante EQUIVALENTE, no un test faltante.
+  //
+  // Deja de serlo el dia que aparezca un hook que no atrape, y esa es
+  // exactamente la razon para no sacarlo: la garantia "nunca tires una reserva
+  // por una integracion caida" no puede depender de que cada pieza futura se
+  // acuerde de atrapar la suya.
+  //
+  // Por eso el hook es inyectable: con uno sintetico que lanza, la frontera
+  // tiene su propio test y la mutacion rompe.
+  await sinRomper('cancelacion', id, () => alCancelar(env, id));
 
   return { estado: 'exito' };
 }

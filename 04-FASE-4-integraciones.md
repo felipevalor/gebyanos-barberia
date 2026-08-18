@@ -13,16 +13,21 @@
 
 ### Antes de escribir nada
 
-**Este código ya existió en este proyecto.** El stack original en Cloudflare tenía exactamente esto en `functions/admin/api/_gcal.js` (líneas 1-208 según `migration/PLAN_MIGRACION.md`): el JWT manual de Google Calendar, ya resuelto una vez.
+⚠️ **No busques `_gcal.js` en el historial de git: no está.** Ya se buscó por nombre y por contenido en los tres repos que sobreviven (374 commits) y no aparece. Vivía en el repo original de Cloudflare Pages, que no se conservó.
 
-**Recuperalo del historial de git antes de escribirlo de nuevo.** Algo como:
+`migration/PLAN_MIGRACION.md` sí existe y **referencia** ese archivo como origen del port (`GoogleCalendarService.cs ← _gcal.js líneas 1–208`), pero es una tabla de mapeo: nunca contuvo el código JS.
 
-```bash
-git log --all --diff-filter=D --name-only -- '*_gcal.js'
-git show <commit>:functions/admin/api/_gcal.js
-```
+**La mejor fuente disponible es el port a .NET:**
 
-Puede necesitar ajustes (era Pages Functions, no Workers), pero el flujo de firma del JWT es el mismo.
+| Qué sacar | De dónde |
+|---|---|
+| Los strings exactos del evento (título, descripción) | `Barberia.Api/Services/ReservaService.cs`, en la llamada al servicio |
+| Los campos del evento y el doble `timeZone` en `start` y `end` | `Barberia.Api/Services/GoogleCalendarService.cs` |
+| El patrón de manejo de errores | Idem |
+
+**La firma del JWT hay que escribirla de cero**: en .NET la hace el SDK de Google, así que no hay nada que portar. Es la parte con `crypto.subtle` y no tiene referencia previa.
+
+🐛 **Y un bug del helper .NET que NO hay que replicar:** `SlotHelper.BuildEventTimes` arma el fin como `totalEnd / 60` sin normalizar medianoche, así que 23:30 + 30 min da `"24:00:00-03:00"`, que no es ISO válido. El `buildEventTimes` de la Fase 1 ya rota al día siguiente y tiene test. Si alguien "corrige" hacia el comportamiento viejo, está introduciendo el bug.
 
 ### El flujo de autenticación
 

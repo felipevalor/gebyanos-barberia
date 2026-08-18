@@ -901,7 +901,9 @@ Los textos de extra que usa el sistema: `Reserva confirmada vía Web.`, `Turno c
 
 Autenticación por **Service Account**: hay que armar un JWT firmado con RS256 usando la private key del JSON de credenciales, canjearlo por un access token en `https://oauth2.googleapis.com/token`, y usar ese token contra la Calendar API v3. Todo con `fetch` y `crypto.subtle`.
 
-**Buena noticia: este código ya existió en este proyecto.** El stack original en Cloudflare tenía exactamente esto en `functions/admin/api/_gcal.js` (líneas 1-208 según `migration/PLAN_MIGRACION.md`). **Recuperalo del historial de git antes de escribirlo de nuevo.**
+⚠️ **`_gcal.js` no es recuperable.** `migration/PLAN_MIGRACION.md` lo referencia como origen del port (`GoogleCalendarService.cs ← _gcal.js líneas 1–208`), pero es una tabla de mapeo: el archivo vivía en el repo original de Cloudflare Pages, que no se conservó. Verificado por búsqueda de nombre y contenido en los tres repos que sobreviven.
+
+**La mejor fuente es el port a .NET:** `GoogleCalendarService.cs` para los campos del evento y el manejo de errores, y `ReservaService.cs` para los strings exactos del título y la descripción. La firma del JWT hay que escribirla de cero — en .NET la hace el SDK.
 
 **Campos del evento:**
 

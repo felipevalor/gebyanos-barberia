@@ -554,6 +554,33 @@ describe('🔴 la regla de oro: nunca tirar una reserva por una integración ca�
     expect(JSON.stringify(avisos[0])).toContain('la base explotó');
   });
 
+  it('🔴 un hook que LANZA no tira la cancelación', async () => {
+    // La mutación que borraba `sinRomper` sobrevivía porque el hook real nunca
+    // lanza. Con uno sintético que sí lanza, la frontera queda cubierta: es la
+    // garantía para el hook futuro que se olvide de atrapar lo suyo.
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const id = await sembrarReserva({ eventId: 'evt-1' });
+
+    const hookRoto = async () => {
+      throw new Error('un hook futuro que no atrapa');
+    };
+
+    const r = await cancelarReserva(
+      env,
+      { barberoId: BARBERO, rol: 'barbero' },
+      id,
+      new Date(),
+      hookRoto,
+    );
+
+    expect(r.estado).toBe('exito');
+
+    const fila = await env.DB.prepare('SELECT estado FROM reservas WHERE id = ?')
+      .bind(id)
+      .first<{ estado: string }>();
+    expect(fila?.estado).toBe('cancelada');
+  });
+
   it('cancelar devuelve éxito aunque el borrado del evento falle', async () => {
     interceptar([
       () => {
